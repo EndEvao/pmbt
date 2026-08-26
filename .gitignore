@@ -1,0 +1,45 @@
+# Data — never publish (multi-GB, gitignored in both repos)
+/data
+
+# Rust / Cargo
+/target
+**/*.rs.bk
+*.pdb
+# NOTE: Cargo.lock is intentionally NOT ignored — commit it for an application.
+
+# Python tooling in scripts/
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets / environment
+.env
+.env.local
+
+# Local scratch report outputs (root-anchored so assets/*.html is unaffected)
+/*.html
+/*.json
+
+# Exploration scratch
+*.ipynb
+.ipynb_checkpoints/
+explained.md
+stages.md
+
+# Claude Code local state (never publish)
+.claude/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE / editors
+/.idea
+/.vscode
+*.swp
+*.swo
+
+# Logs
+*.log

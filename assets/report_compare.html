@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · pmbt compare</title>
+<style>
+  /* Terminal palette — dark-first. The c0..c4 ramp (validated in both modes)
+     identifies up to five configs on one overlaid chart. */
+  :root {
+    color-scheme: dark;
+    --plane:#090c11; --surface:#0f141b; --surface-2:#141b24;
+    --text-1:#e8eaed; --text-2:#9aa4af; --muted:#5b6672;
+    --grid:#19212b; --axis:#2a3542; --border:#1e2731;
+    --accent:#f5a623; --good-text:#3fd08a; --critical:#e5484d;
+    --c0:#3987e5; --c1:#d95926; --c2:#199e70; --c3:#9670e6; --c4:#b5872a;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --plane:#eeeeea; --surface:#ffffff; --surface-2:#f7f7f3;
+    --text-1:#14171c; --text-2:#4a5560; --muted:#8b939c;
+    --grid:#e7e7e0; --axis:#c9c9bf; --border:#e2e2da;
+    --accent:#a86400; --good-text:#0a7c43; --critical:#c8353a;
+    --c0:#2a78d6; --c1:#eb6834; --c2:#0f9d63; --c3:#8b5cf6; --c4:#a67c00;
+  }
+  * { box-sizing: border-box; }
+  :root { --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace; --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { margin:0; background:var(--plane); color:var(--text-1); font:13px/1.5 var(--mono); -webkit-font-smoothing:antialiased; }
+
+  .cmdbar { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:14px; padding:0 18px; height:44px; background:var(--surface); border-bottom:1px solid var(--border); }
+  .brand { font-weight:700; letter-spacing:.18em; font-size:13px; color:var(--accent); padding-right:14px; border-right:1px solid var(--border); }
+  .cmd-title { font-size:13px; font-weight:600; color:var(--text-1); }
+  .cmd-sub { font-size:12px; color:var(--muted); }
+  .spacer { flex:1; }
+  .theme-toggle { border:1px solid var(--border); background:var(--surface-2); color:var(--text-2); padding:5px 11px; cursor:pointer; font:11px var(--mono); letter-spacing:.12em; border-radius:2px; }
+  .theme-toggle:hover { color:var(--accent); border-color:var(--accent); }
+
+  .wrap { max-width:1200px; margin:0 auto; padding:18px 18px 8px; }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:3px; margin-top:14px; }
+  .phead { display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--border); }
+  .phead::before { content:""; width:3px; height:13px; background:var(--accent); border-radius:1px; }
+  .ph-label { font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--text-1); }
+  .ph-tag { margin-left:auto; font-size:11px; color:var(--muted); }
+  .pbody { padding:14px; }
+  .cap { color:var(--text-2); font:12px/1.55 var(--sans); margin:0 0 12px; max-width:92ch; }
+  .note { color:var(--muted); font:12px/1.55 var(--sans); margin:8px 0 0; }
+
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--text-2); margin-bottom:10px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .swatch { width:16px; height:3px; border-radius:2px; display:inline-block; }
+
+  svg { display:block; width:100%; height:auto; overflow:visible; }
+  .tick text { fill:var(--muted); font-size:10px; font-variant-numeric:tabular-nums; font-family:var(--mono); }
+  .tick line { stroke:var(--grid); stroke-width:1; }
+  .axisline { stroke:var(--axis); stroke-width:1; }
+  .series { fill:none; stroke-width:2; }
+  .crosshair { stroke:var(--accent); stroke-width:1; stroke-dasharray:3 3; opacity:.7; }
+
+  table.data { border-collapse:collapse; width:100%; font-size:11.5px; margin-top:4px; overflow-x:auto; display:block; }
+  table.data th, table.data td { text-align:right; padding:6px 12px; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  table.data th:first-child, table.data td:first-child { text-align:left; }
+  table.data th { color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.08em; font-size:10px; }
+  table.data tbody tr:hover td { background:var(--surface-2); }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  td.pos, .pos { color:var(--good-text); } td.neg, .neg { color:var(--critical); }
+
+  .tooltip { position:fixed; pointer-events:none; z-index:30; opacity:0; transition:opacity .08s; background:var(--surface-2); border:1px solid var(--border); border-radius:3px; padding:8px 10px; font:11px var(--mono); box-shadow:0 6px 22px rgba(0,0,0,.45); min-width:150px; }
+  .tooltip .tt-t { color:var(--accent); margin-bottom:5px; }
+  .tooltip .tt-row { display:flex; justify-content:space-between; gap:16px; }
+  .tooltip .tt-row .val { font-variant-numeric:tabular-nums; font-weight:600; }
+
+  .statusbar { max-width:1200px; margin:14px auto 0; padding:10px 18px; border-top:1px solid var(--border); color:var(--muted); font:11px/1.7 var(--mono); }
+  .statusbar b { color:var(--text-2); font-weight:600; }
+</style>
+</head>
+<body>
+<div class="cmdbar">
+  <span class="brand">PMBT</span>
+  <span class="cmd-title">__TITLE__</span>
+  <span class="cmd-sub" id="subtitle"></span>
+  <span class="spacer"></span>
+  <button class="theme-toggle" id="theme">◐ THEME</button>
+</div>
+
+<main class="wrap">
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Realism comparison</span><span class="ph-tag">one strategy, one feed</span></div>
+    <div class="pbody">
+      <p class="cap" id="axis-cap"></p>
+      <div id="config-table"></div>
+      <p class="note" id="nocat-note" style="display:none"></p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Cumulative PnL by config</span><span class="ph-tag">shared time axis</span></div>
+    <div class="pbody">
+      <p class="cap">Every config replays the same feed, so the curves share one time axis and overlay directly.</p>
+      <div class="legend" id="legend"></div>
+      <div id="chart"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="waterfall-card">
+    <div class="phead"><span class="ph-label">Cost waterfall</span><span class="ph-tag">frictionless → realistic</span></div>
+    <div class="pbody">
+      <p class="cap">What each added friction took off the frictionless run — the step-to-step differences in total PnL along the ladder.</p>
+      <div id="waterfall"></div>
+    </div>
+  </section>
+</main>
+
+<div class="statusbar" id="foot"></div>
+<div class="tooltip" id="tt"></div>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("report-data").textContent);
+const RUNS = DATA.runs, WF = DATA.waterfall;
+const tt = document.getElementById("tt");
+const CAT = ["--c0","--c1","--c2","--c3","--c4"];
+const color = i => `var(${CAT[i % CAT.length]})`;
+
+const money = v => (v < 0 ? "−" : "") + "$" + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+const signMoney = v => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toLocaleString(undefined, {maximumFractionDigits:2});
+const pct = v => (v * 100).toFixed(2) + "%";
+const num = (v, d = 2) => v.toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
+function fmtTime(ms) { return new Date(ms).toLocaleString(undefined, {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"}); }
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const el = (n, a = {}) => { const e = document.createElementNS(SVGNS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const lin = (d0, d1, r0, r1) => v => d1 === d0 ? (r0 + r1) / 2 : r0 + (v - d0) * (r1 - r0) / (d1 - d0);
+function niceTicks(min, max, count) {
+  if (min === max) return [min];
+  const span = max - min, step0 = span / count, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const norm = step0 / mag, step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
+  const out = []; for (let t = Math.ceil(min / step) * step; t <= max + 1e-9; t += step) out.push(t);
+  return out;
+}
+function nearest(pts, t) {
+  if (!pts.length) return -1;
+  let lo = 0, hi = pts.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (pts[m].t < t) lo = m + 1; else hi = m; }
+  if (lo > 0 && Math.abs(pts[lo - 1].t - t) < Math.abs(pts[lo].t - t)) lo--;
+  return lo;
+}
+
+// ---- axis caption + config table ------------------------------------------
+document.getElementById("subtitle").textContent = DATA.subtitle || "";
+document.getElementById("axis-cap").textContent = DATA.ladder
+  ? "Cumulative realism ladder: each row adds one friction on top of the row above, so the change in total PnL is that component's cost."
+  : "One knob swept across configs; all other settings held constant.";
+if (DATA.ladder && !DATA.category_known) {
+  const n = document.getElementById("nocat-note");
+  n.style.display = "";
+  n.textContent = "No category was set, so the taker-delay and fees rungs are no-ops (both are category-driven) — their cost reads as $0.";
+}
+(function configTable() {
+  const head = ["Config", "Total PnL", "Return", "Sharpe (ann · raw)", "Max DD", "Fills", "Fees", "Rej", "Exp"];
+  const rows = RUNS.map((r, i) => {
+    const cells = [
+      `<span class="dot" style="background:${color(i)}"></span>${r.label}`,
+      `<span class="${r.total_pnl >= 0 ? "pos" : "neg"}">${signMoney(r.total_pnl)}</span>`,
+      pct(r.total_return),
+      num(r.sharpe, 2) + " · " + num(r.sharpe_raw, 3),
+      pct(r.max_dd),
+      String(r.fills),
+      money(r.fees),
+      String(r.rejections),
+      String(r.expired),
+    ];
+    return `<tr title="${r.detail}">${cells.map((c, j) => `<td${j === 0 ? ' style="text-align:left"' : ""}>${c}</td>`).join("")}</tr>`;
+  }).join("");
+  document.getElementById("config-table").innerHTML =
+    '<table class="data"><thead><tr>' + head.map(h => `<th>${h}</th>`).join("") + "</tr></thead><tbody>" + rows + "</tbody></table>";
+})();
+
+// ---- overlaid PnL chart ----------------------------------------------------
+(function chart() {
+  document.getElementById("legend").innerHTML = RUNS.map((r, i) =>
+    `<span><i class="swatch" style="background:${color(i)}"></i>${r.label}</span>`).join("");
+
+  let t0 = Infinity, t1 = -Infinity, ylo = 0, yhi = 0;
+  for (const r of RUNS) for (const p of r.curve) { t0 = Math.min(t0, p.t); t1 = Math.max(t1, p.t); ylo = Math.min(ylo, p.p); yhi = Math.max(yhi, p.p); }
+  if (!isFinite(t0)) { t0 = 0; t1 = 1; }
+  const pad = (yhi - ylo) * 0.1 || 1; ylo -= pad; yhi += pad;
+
+  const W = 1080, H = 300, M = {t:10, r:12, b:24, l:64};
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const x = lin(t0, t1, M.l, M.l + iw), y = lin(ylo, yhi, M.t + ih, M.t);
+  const svg = el("svg", {viewBox:`0 0 ${W} ${H}`, role:"img", "aria-label":"Cumulative PnL by config"});
+  for (const t of niceTicks(ylo, yhi, 5)) { const yy = y(t); const g = el("g", {class:"tick"}); g.appendChild(el("line", {x1:M.l, x2:M.l + iw, y1:yy, y2:yy})); const tx = el("text", {x:M.l - 8, y:yy + 4, "text-anchor":"end"}); tx.textContent = signMoney(t); g.appendChild(tx); svg.appendChild(g); }
+  if (ylo < 0 && yhi > 0) svg.appendChild(el("line", {x1:M.l, x2:M.l + iw, y1:y(0), y2:y(0), class:"axisline"}));
+  for (const t of niceTicks(t0, t1, 6)) { const xx = x(t); const g = el("g", {class:"tick"}); g.appendChild(el("line", {x1:xx, x2:xx, y1:M.t, y2:M.t + ih})); const tx = el("text", {x:xx, y:H - 6, "text-anchor":"middle"}); tx.textContent = fmtTime(t); g.appendChild(tx); svg.appendChild(g); }
+
+  RUNS.forEach((r, i) => {
+    let d = "", pen = false;
+    for (const p of r.curve) { d += (pen ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.p).toFixed(1) + " "; pen = true; }
+    svg.appendChild(el("path", {d, class:"series", stroke:color(i)}));
+  });
+
+  const cross = el("line", {class:"crosshair", y1:M.t, y2:M.t + ih, x1:-9, x2:-9});
+  svg.appendChild(cross);
+  document.getElementById("chart").appendChild(svg);
+
+  svg.addEventListener("pointermove", ev => {
+    const rect = svg.getBoundingClientRect();
+    const vbX = (ev.clientX - rect.left) / rect.width * W;
+    const t = t0 + (vbX - M.l) / iw * (t1 - t0);
+    cross.setAttribute("x1", x(t)); cross.setAttribute("x2", x(t));
+    const rows = RUNS.map((r, i) => { const j = nearest(r.curve, t); return j < 0 ? null : [r.label, signMoney(r.curve[j].p), color(i)]; }).filter(Boolean);
+    tt.innerHTML = `<div class="tt-t">${fmtTime(t)}</div>` + rows.map(r => `<div class="tt-row"><span style="color:${r[2]}">● ${r[0]}</span><span class="val">${r[1]}</span></div>`).join("");
+    let left = ev.clientX + 14; if (left + 170 > innerWidth) left = ev.clientX - 170 - 14;
+    tt.style.left = left + "px"; tt.style.top = (ev.clientY + 14) + "px"; tt.style.opacity = 1;
+  });
+  svg.addEventListener("pointerleave", () => { cross.setAttribute("x1", -9); cross.setAttribute("x2", -9); tt.style.opacity = 0; });
+})();
+
+// ---- cost waterfall (ladder only) -----------------------------------------
+(function waterfall() {
+  const card = document.getElementById("waterfall-card");
+  if (!WF || !WF.length) { card.style.display = "none"; return; }
+  const W = 1080, H = 220, M = {t:10, r:12, b:44, l:64};
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  let lo = 0, hi = 0, run = 0;
+  WF.forEach(s => { if (s.total) { lo = Math.min(lo, 0, s.delta); hi = Math.max(hi, s.delta); } else { lo = Math.min(lo, run, run + s.delta); hi = Math.max(hi, run, run + s.delta); run += s.delta; } });
+  const pad = (hi - lo) * 0.15 || 1; lo -= pad; hi += pad;
+  const svg = el("svg", {viewBox:`0 0 ${W} ${H}`});
+  const y = lin(lo, hi, M.t + ih, M.t);
+  for (const t of niceTicks(lo, hi, 4)) { const yy = y(t); const g = el("g", {class:"tick"}); g.appendChild(el("line", {x1:M.l, x2:M.l + iw, y1:yy, y2:yy})); const tx = el("text", {x:M.l - 8, y:yy + 4, "text-anchor":"end"}); tx.textContent = signMoney(t); g.appendChild(tx); svg.appendChild(g); }
+  svg.appendChild(el("line", {x1:M.l, x2:M.l + iw, y1:y(0), y2:y(0), class:"axisline"}));
+  const gap = iw / WF.length, bw = gap * 0.5;
+  run = 0;
+  WF.forEach((s, i) => {
+    const cx = M.l + gap * (i + 0.5);
+    const base = s.total ? 0 : run, top = s.total ? s.delta : run + s.delta;
+    const yTop = y(Math.max(base, top)), yBot = y(Math.min(base, top));
+    const col = s.total ? "var(--accent)" : s.delta >= 0 ? "var(--good-text)" : "var(--critical)";
+    svg.appendChild(el("rect", {x:cx - bw / 2, y:yTop, width:bw, height:Math.max(1, yBot - yTop), rx:2, fill:col}));
+    const lab = el("text", {x:cx, y:yTop - 6, "text-anchor":"middle", fill:"var(--text-2)", "font-size":"11", "font-family":"var(--mono)"}); lab.textContent = signMoney(s.delta); svg.appendChild(lab);
+    const nm = el("text", {x:cx, y:H - 22, "text-anchor":"middle", fill:"var(--muted)", "font-size":"11", "font-family":"var(--mono)", "letter-spacing":".04em"}); nm.textContent = s.label; svg.appendChild(nm);
+    if (!s.total) run += s.delta;
+  });
+  document.getElementById("waterfall").appendChild(svg);
+})();
+
+// ---- chrome ----------------------------------------------------------------
+document.getElementById("foot").innerHTML =
+  `Same strategy and feed across all configs; only the simulation settings differ. Curves are mark-to-market PnL with terminal settlement, downsampled on the shared timeline. Sharpe is annualized (raw per-bar shown alongside). Generated by <b>pmbt</b>.`;
+document.getElementById("theme").addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · pmbt</title>
+<style>
+  /* ── Terminal palette ──────────────────────────────────────────────────
+     Dark-first (the working look). Series hues are the validated data-viz
+     reference instance (CVD-checked in both modes); the terminal identity is
+     carried by the chrome — near-black surface, amber accent, monospace. */
+  :root {
+    color-scheme: dark;
+    --plane:      #090c11;
+    --surface:    #0f141b;
+    --surface-2:  #141b24;
+    --text-1:     #e8eaed;
+    --text-2:     #9aa4af;
+    --muted:      #5b6672;
+    --grid:       #19212b;
+    --axis:       #2a3542;
+    --border:     #1e2731;
+    --accent:     #f5a623;                    /* amber — chrome/highlight only */
+    --accent-dim: rgba(245,166,35,0.13);
+    --yes:        #3987e5;
+    --no:         #d95926;
+    --pnl:        #199e70;
+    --quote:      #9670e6;
+    --good-text:  #3fd08a;
+    --neg-text:   #ff6060;
+    --good:       #2fb170;
+    --critical:   #e5484d;
+    --bid:        #2fb170;
+    --ask:        #e5484d;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --plane:      #eeeeea;
+    --surface:    #ffffff;
+    --surface-2:  #f7f7f3;
+    --text-1:     #14171c;
+    --text-2:     #4a5560;
+    --muted:      #8b939c;
+    --grid:       #e7e7e0;
+    --axis:       #c9c9bf;
+    --border:     #e2e2da;
+    --accent:     #a86400;
+    --accent-dim: rgba(168,100,0,0.10);
+    --yes:        #2a78d6;
+    --no:         #eb6834;
+    --pnl:        #0f9d63;
+    --quote:      #8b5cf6;
+    --good-text:  #0a7c43;
+    --neg-text:   #c8353a;
+    --good:       #0f9d63;
+    --critical:   #c8353a;
+    --bid:        #0f9d63;
+    --ask:        #c8353a;
+  }
+
+  * { box-sizing: border-box; }
+  :root {
+    --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  body {
+    margin: 0; background: var(--plane); color: var(--text-1);
+    font: 13px/1.5 var(--mono);
+    -webkit-font-smoothing: antialiased;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ── Command bar ──────────────────────────────────────────────────────── */
+  .cmdbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 18px; height: 44px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .brand {
+    font-weight: 700; letter-spacing: .18em; font-size: 13px;
+    color: var(--accent); padding-right: 14px; border-right: 1px solid var(--border);
+  }
+  .cmd-title { font-size: 13px; font-weight: 600; color: var(--text-1); letter-spacing: .01em; }
+  .cmd-sub   { font-size: 12px; color: var(--muted); }
+  .spacer    { flex: 1; }
+  .theme-toggle {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+    padding: 5px 11px; cursor: pointer; font: 11px var(--mono); letter-spacing: .12em;
+    border-radius: 2px;
+  }
+  .theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
+
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 18px 18px 8px; }
+
+  /* ── Panels ───────────────────────────────────────────────────────────── */
+  .panel {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 3px; margin-top: 14px;
+  }
+  .phead {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px; border-bottom: 1px solid var(--border);
+  }
+  .phead::before {
+    content: ""; width: 3px; height: 13px; background: var(--accent); border-radius: 1px;
+  }
+  .ph-label {
+    font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--text-1);
+  }
+  .ph-tag { margin-left: auto; font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+  .pbody { padding: 14px; }
+  .cap { color: var(--text-2); font: 12px/1.55 var(--sans); margin: 0 0 12px; max-width: 92ch; }
+
+  /* ── Stat tiles ───────────────────────────────────────────────────────── */
+  .tiles {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 1px;
+    background: var(--border); border: 1px solid var(--border); border-radius: 3px; overflow: hidden;
+  }
+  .tile { background: var(--surface); padding: 12px 14px; }
+  .tile .k { color: var(--muted); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+  .tile .v { font-size: 21px; font-weight: 600; margin-top: 5px; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .tile .v.pos { color: var(--good-text); }
+  .tile .v.neg { color: var(--neg-text); }
+  .tile .note { color: var(--muted); font-size: 11px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 11px; color: var(--text-2); margin-bottom: 10px; letter-spacing: .02em; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .swatch.line { height: 3px; border-radius: 2px; width: 16px; }
+
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .tick text { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+  .tick line { stroke: var(--grid); stroke-width: 1; }
+  .axisline { stroke: var(--axis); stroke-width: 1; }
+  .series { fill: none; stroke-width: 2; }
+  .crosshair { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 3; opacity: .7; }
+
+  .tooltip {
+    position: fixed; pointer-events: none; z-index: 30; opacity: 0; transition: opacity .08s;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px;
+    padding: 8px 10px; font: 11px var(--mono); box-shadow: 0 6px 22px rgba(0,0,0,.45);
+    min-width: 150px;
+  }
+  .tooltip .tt-t { color: var(--accent); margin-bottom: 5px; letter-spacing: .04em; }
+  .tooltip .tt-row { display: flex; justify-content: space-between; gap: 16px; }
+  .tooltip .tt-row .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+
+  .depth-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; color: var(--text-2); font-size: 11px; letter-spacing: .06em; }
+  .depth-controls input[type=range] { flex: 1; accent-color: var(--accent); }
+
+  table.data { border-collapse: collapse; width: 100%; font-size: 11.5px; margin-top: 4px; }
+  table.data th, table.data td { text-align: right; padding: 5px 12px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  table.data th { color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
+  table.data tbody tr:hover td { background: var(--surface-2); }
+
+  details { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+  summary { cursor: pointer; color: var(--text-2); font-size: 12px; letter-spacing: .04em; list-style: none; }
+  summary::before { content: "▸ "; color: var(--accent); }
+  details[open] summary::before { content: "▾ "; }
+  summary:hover { color: var(--text-1); }
+
+  .callout {
+    border-left: 2px solid var(--accent); background: var(--accent-dim);
+    padding: 9px 12px; margin-top: 10px; font: 12px/1.55 var(--sans); color: var(--text-2);
+    border-radius: 0 3px 3px 0;
+  }
+
+  /* ── Status bar ───────────────────────────────────────────────────────── */
+  .statusbar {
+    max-width: 1200px; margin: 14px auto 0; padding: 10px 18px;
+    border-top: 1px solid var(--border); color: var(--muted);
+    font: 11px/1.7 var(--mono); letter-spacing: .02em;
+  }
+  .statusbar b { color: var(--text-2); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="cmdbar">
+  <span class="brand">PMBT</span>
+  <span class="cmd-title">__TITLE__</span>
+  <span class="cmd-sub" id="subtitle"></span>
+  <span class="spacer"></span>
+  <button class="theme-toggle" id="theme">◐ THEME</button>
+</div>
+
+<main class="wrap">
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Performance</span><span class="ph-tag">mark-to-market + settlement</span></div>
+    <div class="pbody">
+      <div class="tiles" id="tiles"></div>
+      <p class="cap" id="ann-note" style="margin-top:12px"></p>
+      <details>
+        <summary>PnL attribution — where the total comes from</summary>
+        <div id="waterfall"></div>
+      </details>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Price &amp; PnL</span><span class="ph-tag">shared time axis</span></div>
+    <div class="pbody">
+      <p class="cap">Traded-token Yes price and its No complement (top); cumulative mark-to-market PnL with the terminal settlement (bottom), against a dashed passive buy-and-hold benchmark. Triangles mark fills.</p>
+      <div class="legend">
+        <span><i class="swatch line" style="background:var(--yes)"></i>Yes (traded token)</span>
+        <span><i class="swatch line" style="background:var(--no)"></i>No (complement)</span>
+        <span><i class="swatch line" style="background:var(--pnl)"></i>Cumulative PnL</span>
+        <span><i class="swatch line" style="background:var(--muted)"></i>Buy &amp; hold</span>
+        <span id="quote-legend" style="display:none"><i class="swatch line" style="background:var(--quote)"></i>Our resting quotes</span>
+        <span><i class="swatch" style="background:var(--good);clip-path:polygon(50% 0,100% 100%,0 100%)"></i>Buy</span>
+        <span><i class="swatch" style="background:var(--critical);clip-path:polygon(0 0,100% 0,50% 100%)"></i>Sell</span>
+      </div>
+      <div id="price"></div>
+      <div id="pnl"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Trades</span><span class="ph-tag">round-trip &amp; maker analytics</span></div>
+    <div class="pbody">
+      <p class="cap">Round-trip analytics, folded from the fills through the same average-cost accounting the engine uses. Buy-and-hold exits via settlement, not a sell, so it closes no round trips — these light up for strategies that trade in and out.</p>
+      <div class="tiles" id="trade-tiles"></div>
+      <div id="maker-block" style="display:none">
+        <p class="cap" style="margin:16px 0 8px">Maker orders — how our quotes fared.</p>
+        <div class="tiles" id="maker-tiles"></div>
+        <div class="callout" id="maker-note"></div>
+      </div>
+      <details>
+        <summary>Blotter — every fill with running position &amp; realized P&amp;L</summary>
+        <div id="blotter"></div>
+      </details>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Order-book depth</span><span class="ph-tag">scrub the timeline</span></div>
+    <div class="pbody">
+      <p class="cap">Book imbalance (total bid vs ask size) over time — drag to scrub. The ladder shows cumulative resting depth at the scrubbed instant, bids left, asks right.</p>
+      <div class="depth-controls">
+        <span>T=</span>
+        <input type="range" id="scrub" min="0" max="0" value="0" step="1">
+        <span id="scrub-label" class="num"></span>
+      </div>
+      <div id="imbalance"></div>
+      <div id="ladder"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Run summary</span><span class="ph-tag">exact figures</span></div>
+    <div class="pbody">
+      <div id="tables"></div>
+    </div>
+  </section>
+</main>
+
+<div class="statusbar" id="foot"></div>
+
+<div class="tooltip" id="tt"></div>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("report-data").textContent);
+const S = DATA.summary, ST = DATA.stats, PTS = DATA.pts, FILLS = DATA.fills, DEPTH = DATA.depth;
+const tt = document.getElementById("tt");
+// Only a maker strategy has quotes to draw.
+const HAS_QUOTES = PTS.some(p => p.qb != null || p.qa != null);
+const OS = DATA.order_stats;
+
+// ---- formatting ------------------------------------------------------------
+const money = v => (v < 0 ? "−" : "") + "$" + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const signMoney = v => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toLocaleString(undefined, {maximumFractionDigits: 2});
+const pct = v => (v * 100).toFixed(2) + "%";
+const num = (v, d = 2) => v.toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
+function fmtTime(ms) {
+  const d = new Date(ms);
+  return d.toLocaleString(undefined, {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+}
+function fmtDur(us) {
+  const s = us / 1e6;
+  if (s < 90) return s.toFixed(0) + "s";
+  if (s < 5400) return (s / 60).toFixed(1) + "m";
+  if (s < 172800) return (s / 3600).toFixed(1) + "h";
+  return (s / 86400).toFixed(1) + "d";
+}
+
+// ---- scales & ticks --------------------------------------------------------
+const SVGNS = "http://www.w3.org/2000/svg";
+const el = (n, a = {}) => { const e = document.createElementNS(SVGNS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const lin = (d0, d1, r0, r1) => v => d1 === d0 ? (r0 + r1) / 2 : r0 + (v - d0) * (r1 - r0) / (d1 - d0);
+function niceTicks(min, max, count) {
+  if (min === max) return [min];
+  const span = max - min, step0 = span / count, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const norm = step0 / mag, step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
+  const out = []; for (let t = Math.ceil(min / step) * step; t <= max + 1e-9; t += step) out.push(t);
+  return out;
+}
+
+const T0 = PTS.length ? PTS[0].t : 0, T1 = PTS.length ? PTS[PTS.length - 1].t : 1;
+
+// ---- generic time-series line chart with synced crosshair ------------------
+const charts = [];
+function timeChart(mount, opts) {
+  const W = 1080, H = opts.height, M = {t: 10, r: 12, b: 22, l: 60};
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": opts.aria});
+  const x = lin(T0, T1, M.l, M.l + iw);
+  const ys = opts.yDomain;
+  const y = lin(ys[0], ys[1], M.t + ih, M.t);
+
+  // y gridlines + labels
+  for (const t of niceTicks(ys[0], ys[1], 5)) {
+    const yy = y(t);
+    const g = el("g", {class: "tick"});
+    g.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: yy, y2: yy}));
+    const tx = el("text", {x: M.l - 8, y: yy + 4, "text-anchor": "end"}); tx.textContent = opts.yFmt(t);
+    g.appendChild(tx); svg.appendChild(g);
+  }
+  // zero baseline emphasis for PnL
+  if (opts.zeroLine && ys[0] < 0 && ys[1] > 0) {
+    svg.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: y(0), y2: y(0), class: "axisline"}));
+  }
+  // x ticks (shared: only bottom chart labels them, but both draw gridlines)
+  for (const t of niceTicks(T0, T1, 6)) {
+    const xx = x(t);
+    const g = el("g", {class: "tick"});
+    g.appendChild(el("line", {x1: xx, x2: xx, y1: M.t, y2: M.t + ih}));
+    if (opts.xLabels) { const tx = el("text", {x: xx, y: H - 6, "text-anchor": "middle"}); tx.textContent = fmtTime(t); g.appendChild(tx); }
+    svg.appendChild(g);
+  }
+
+  // series paths (null values break the line)
+  for (const s of opts.series) {
+    let d = "", pen = false;
+    for (const p of PTS) {
+      const v = s.get(p);
+      if (v == null || isNaN(v)) { pen = false; continue; }
+      d += (pen ? "L" : "M") + x(p.t).toFixed(1) + " " + y(v).toFixed(1) + " "; pen = true;
+    }
+    if (opts.fillTo != null && s === opts.series[0]) {
+      // area to a baseline under the primary series only (the benchmark
+      // overlay is a bare line, so the fill still reads as "the strategy").
+      let area = "", started = false, lastX = 0;
+      for (const p of PTS) { const v = s.get(p); if (v == null) continue; if (!started) { area += "M" + x(p.t).toFixed(1) + " " + y(opts.fillTo).toFixed(1) + " "; started = true; } area += "L" + x(p.t).toFixed(1) + " " + y(v).toFixed(1) + " "; lastX = x(p.t); }
+      if (started) { area += "L" + lastX.toFixed(1) + " " + y(opts.fillTo).toFixed(1) + " Z"; svg.appendChild(el("path", {d: area, fill: s.color, "fill-opacity": .12, stroke: "none"})); }
+    }
+    svg.appendChild(el("path", {d, class: "series", stroke: s.color, "stroke-dasharray": s.dash || ""}));
+  }
+
+  // markers (fills)
+  for (const m of (opts.markers || [])) {
+    const mx = x(m.t), my = y(m.y), r = 5;
+    const up = m.side === "buy";
+    const pts = up ? `${mx},${my - r} ${mx + r},${my + r} ${mx - r},${my + r}`
+                   : `${mx},${my + r} ${mx + r},${my - r} ${mx - r},${my - r}`;
+    svg.appendChild(el("polygon", {points: pts, fill: up ? "var(--good)" : "var(--critical)", stroke: "var(--surface)", "stroke-width": 1}));
+  }
+
+  const cross = el("line", {class: "crosshair", y1: M.t, y2: M.t + ih, x1: -9, x2: -9});
+  svg.appendChild(cross);
+  mount.appendChild(svg);
+
+  const chart = {svg, x, y, M, iw, ih, W, H, cross, opts,
+    setCross(t) { const xx = x(t); cross.setAttribute("x1", xx); cross.setAttribute("x2", xx); },
+    hideCross() { cross.setAttribute("x1", -9); cross.setAttribute("x2", -9); }};
+  charts.push(chart);
+
+  // hover: map pixel → nearest point, sync all charts
+  svg.addEventListener("pointermove", ev => {
+    const rect = svg.getBoundingClientRect();
+    const vbX = (ev.clientX - rect.left) / rect.width * W;
+    const t = T0 + (vbX - M.l) / iw * (T1 - T0);
+    const idx = nearestIdx(t);
+    if (idx < 0) return;
+    const p = PTS[idx];
+    charts.forEach(c => c.setCross(p.t));
+    showTooltip(ev, p);
+  });
+  svg.addEventListener("pointerleave", () => { charts.forEach(c => c.hideCross()); tt.style.opacity = 0; });
+  return chart;
+}
+
+function nearestIdx(t) {
+  if (!PTS.length) return -1;
+  let lo = 0, hi = PTS.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (PTS[mid].t < t) lo = mid + 1; else hi = mid; }
+  if (lo > 0 && Math.abs(PTS[lo - 1].t - t) < Math.abs(PTS[lo].t - t)) lo--;
+  return lo;
+}
+function showTooltip(ev, p) {
+  const rows = [];
+  if (p.y != null) rows.push(["Yes", num(p.y, 3), "var(--yes)"]);
+  if (p.n != null) rows.push(["No", num(p.n, 3), "var(--no)"]);
+  rows.push(["PnL", signMoney(p.p), "var(--pnl)"]);
+  rows.push(["Buy & hold", signMoney(p.e), "var(--muted)"]);
+  if (p.qb != null) rows.push(["Our bid", num(p.qb, 3), "var(--quote)"]);
+  if (p.qa != null) rows.push(["Our ask", num(p.qa, 3), "var(--quote)"]);
+  if (p.q) rows.push(["Position", num(p.q, 0) + " sh", "var(--text-2)"]);
+  tt.innerHTML = `<div class="tt-t">${fmtTime(p.t)}</div>` +
+    rows.map(r => `<div class="tt-row"><span style="color:${r[2]}">● ${r[0]}</span><span class="val">${r[1]}</span></div>`).join("");
+  const pad = 14;
+  let left = ev.clientX + pad, top = ev.clientY + pad;
+  if (left + 170 > innerWidth) left = ev.clientX - 170 - pad;
+  tt.style.left = left + "px"; tt.style.top = top + "px"; tt.style.opacity = 1;
+}
+
+// ---- build the two panels --------------------------------------------------
+function priceDomain() {
+  let lo = 1, hi = 0;
+  for (const p of PTS) {
+    if (p.y != null) { lo = Math.min(lo, p.y, p.n); hi = Math.max(hi, p.y, p.n); }
+    for (const q of [p.qb, p.qa]) if (q != null) { lo = Math.min(lo, q); hi = Math.max(hi, q); }
+  }
+  if (lo > hi) { lo = 0; hi = 1; }
+  const pad = (hi - lo) * 0.08 || 0.05;
+  return [Math.max(0, lo - pad), Math.min(1, hi + pad)];
+}
+function pnlDomain() {
+  let lo = 0, hi = 0;
+  for (const p of PTS) { lo = Math.min(lo, p.p, p.e); hi = Math.max(hi, p.p, p.e); }
+  const pad = (hi - lo) * 0.1 || 1;
+  return [lo - pad, hi + pad];
+}
+timeChart(document.getElementById("price"), {
+  height: 220, aria: "Yes and No price over time", yDomain: priceDomain(),
+  yFmt: v => num(v, 2), xLabels: false,
+  series: HAS_QUOTES ? [
+    {color: "var(--yes)", get: p => p.y},
+    {color: "var(--no)", get: p => p.n},
+    {color: "var(--quote)", get: p => p.qb, dash: "4 3"},
+    {color: "var(--quote)", get: p => p.qa, dash: "4 3"},
+  ] : [{color: "var(--yes)", get: p => p.y}, {color: "var(--no)", get: p => p.n}],
+  markers: FILLS.map(f => ({t: f.t, y: f.price, side: f.side})),
+});
+timeChart(document.getElementById("pnl"), {
+  height: 170, aria: "Cumulative PnL over time", yDomain: pnlDomain(),
+  yFmt: v => signMoney(v), xLabels: true, zeroLine: true, fillTo: 0,
+  series: [
+    {color: "var(--pnl)", get: p => p.p},
+    {color: "var(--muted)", get: p => p.e, dash: "5 4"},
+  ],
+});
+
+// ---- stat tiles ------------------------------------------------------------
+function tile(k, v, cls, note) {
+  return `<div class="tile"><div class="k">${k}</div><div class="v ${cls || ""}">${v}</div>${note ? `<div class="note">${note}</div>` : ""}</div>`;
+}
+const dd = ST.max_drawdown;
+// Alpha vs a passive buy-and-hold of the same token: the return the strategy
+// added (or gave up) over just holding.
+const benchPnl = DATA.bench_final_pnl;
+const alpha = S.total_pnl - benchPnl;
+// Headline row (total return, alpha, max drawdown) leads — all honest for a
+// single resolving run. Sharpe/Sortino/vol follow, each labelled "ann." with
+// the raw per-bar value alongside so the annualization is never hidden.
+document.getElementById("tiles").innerHTML = [
+  tile("Total return", pct(ST.total_return), ST.total_return >= 0 ? "pos" : "neg", signMoney(S.total_pnl)),
+  tile("Alpha vs hold", pct(alpha / S.initial_capital), alpha >= 0 ? "pos" : "neg", `hold ${signMoney(benchPnl)}`),
+  tile("Max drawdown", pct(dd.frac), dd.frac > 0 ? "neg" : "", money(dd.dollars) + " · " + (dd.duration_us ? fmtDur(dd.duration_us) : "—")),
+  tile("Sharpe (ann.)", num(ST.sharpe, 2), "", `raw ${num(ST.sharpe_raw, 3)} · ${num(ST.bar_seconds, 0)}s bars`),
+  tile("Sortino (ann.)", num(ST.sortino, 2), "", `raw ${num(ST.sortino_raw, 3)}`),
+  tile("Ann. volatility", pct(ST.annual_vol), ""),
+  tile("Exposure", pct(ST.exposure), "", "time in market"),
+  tile("Turnover", num(ST.turnover, 3) + "×", "", "notional / capital"),
+  tile("% up bars", pct(ST.pct_positive_bars), ""),
+  tile("Fills", String(S.fills), "", `${S.rejections} rej · ${S.expired} exp`),
+].join("");
+
+// Annualization caveat: a short window annualized extrapolates one span many
+// times over, so flag it and point at the raw numbers instead.
+const spanSec = ST.bars * ST.bar_seconds;
+const annNote = document.getElementById("ann-note");
+if (spanSec < 5 * 86400) {
+  annNote.textContent = `Run spans ${fmtDur(spanSec * 1e6)} and resolves once; annualized Sharpe/Sortino/volatility extrapolate that single window (×${Math.round(Math.sqrt(ST.bars_per_year)).toLocaleString()}). Read them comparatively — the raw per-bar values shown on each tile are the un-extrapolated figures.`;
+} else {
+  annNote.style.display = "none";
+}
+
+// ---- PnL waterfall ---------------------------------------------------------
+(function waterfall() {
+  const steps = [
+    {k: "Realized", v: S.realized_pnl},
+    {k: "Settlement", v: S.settlement_pnl},
+    {k: "Fees", v: -S.fees},
+    {k: "Total", v: S.total_pnl, total: true},
+  ];
+  const W = 1080, H = 180, M = {t: 10, r: 12, b: 40, l: 60};
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  let lo = 0, hi = 0, run = 0;
+  for (const s of steps) { if (s.total) { lo = Math.min(lo, 0, s.v); hi = Math.max(hi, s.v); } else { lo = Math.min(lo, run, run + s.v); hi = Math.max(hi, run, run + s.v); run += s.v; } }
+  const pad = (hi - lo) * 0.15 || 1; lo -= pad; hi += pad;
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`});
+  const y = lin(lo, hi, M.t + ih, M.t);
+  for (const t of niceTicks(lo, hi, 4)) { const yy = y(t); const g = el("g", {class: "tick"}); g.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: yy, y2: yy})); const tx = el("text", {x: M.l - 8, y: yy + 4, "text-anchor": "end"}); tx.textContent = signMoney(t); g.appendChild(tx); svg.appendChild(g); }
+  svg.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: y(0), y2: y(0), class: "axisline"}));
+  const bw = iw / steps.length * 0.5, gap = iw / steps.length;
+  run = 0;
+  steps.forEach((s, i) => {
+    const cx = M.l + gap * (i + 0.5);
+    const base = s.total ? 0 : run, top = s.total ? s.v : run + s.v;
+    const yTop = y(Math.max(base, top)), yBot = y(Math.min(base, top));
+    const color = s.total ? "var(--accent)" : s.v >= 0 ? "var(--good)" : "var(--critical)";
+    svg.appendChild(el("rect", {x: cx - bw / 2, y: yTop, width: bw, height: Math.max(1, yBot - yTop), rx: 2, fill: color}));
+    const lab = el("text", {x: cx, y: yTop - 6, "text-anchor": "middle"}); lab.setAttribute("fill", "var(--text-2)"); lab.setAttribute("font-size", "11"); lab.setAttribute("font-family", "var(--mono)"); lab.textContent = signMoney(s.v); svg.appendChild(lab);
+    const nm = el("text", {x: cx, y: H - 20, "text-anchor": "middle"}); nm.setAttribute("fill", "var(--muted)"); nm.setAttribute("font-size", "11"); nm.setAttribute("font-family", "var(--mono)"); nm.setAttribute("letter-spacing", ".06em"); nm.textContent = s.k.toUpperCase(); svg.appendChild(nm);
+    if (!s.total) run += s.v;
+  });
+  document.getElementById("waterfall").appendChild(svg);
+})();
+
+// ---- trades: round-trip tiles + blotter ------------------------------------
+(function trades() {
+  const TS = DATA.trade_stats, BL = DATA.blotter;
+  const has = TS.round_trips > 0;
+  document.getElementById("trade-tiles").innerHTML = [
+    tile("Round trips", String(TS.round_trips), ""),
+    tile("Win rate", has ? pct(TS.win_rate) : "—", ""),
+    tile("Avg win", has ? signMoney(TS.avg_win) : "—", has ? "pos" : ""),
+    tile("Avg loss", has ? signMoney(TS.avg_loss) : "—", has ? "neg" : ""),
+    tile("Avg hold", TS.avg_hold_us ? fmtDur(TS.avg_hold_us) : "—", "", "per round trip"),
+    tile("Fills", String(BL.length), ""),
+  ].join("");
+  // Maker metrics only mean something once orders actually rested.
+  if (OS && OS.rested > 0) {
+    document.getElementById("maker-block").style.display = "";
+    document.getElementById("maker-tiles").innerHTML = [
+      tile("Maker / taker", `${S.maker_fills || 0} / ${S.taker_fills || 0}`, "", "fills by liquidity"),
+      tile("Fill ratio", pct(OS.fill_ratio), "", `${OS.rested.toLocaleString()} orders rested`),
+      tile("Cancel rate", num(OS.cancel_rate, 2) + "×", "", `${OS.cancelled.toLocaleString()} cancels per fill`),
+      tile("Time in queue", OS.mean_time_in_queue_us ? fmtDur(OS.mean_time_in_queue_us) : "—", "",
+           OS.max_time_in_queue_us ? "max " + fmtDur(OS.max_time_in_queue_us) : ""),
+      tile("Placed", OS.placed.toLocaleString(), "", `${OS.expired.toLocaleString()} left resting at the end`),
+    ].join("");
+    document.getElementById("maker-note").innerHTML =
+      "<strong>These maker fills are optimistic.</strong> Resting orders are filled on a " +
+      "front-of-queue assumption — any trade reaching our price fills us, ignoring the size " +
+      "already queued ahead. Real queue position is unobservable from the book, so treat the " +
+      "fill ratio and maker P&L as an <em>upper bound</em>; quotes that step inside the spread " +
+      "(where nothing else rests) are the defensible ones.";
+  }
+
+  const mount = document.getElementById("blotter");
+  if (BL.length) {
+    mount.innerHTML = '<table class="data"><thead><tr><th>Time</th><th>Side</th><th>Price</th><th>Qty</th><th>Position</th><th>Realized</th></tr></thead><tbody>' +
+      BL.map(r => `<tr><td>${fmtTime(r.ts)}</td><td>${r.side}</td><td>${num(r.price, 3)}</td><td>${num(r.qty, 0)}</td><td>${num(r.position_after, 0)}</td><td>${r.realized ? signMoney(r.realized) : "—"}</td></tr>`).join("") +
+      "</tbody></table>";
+  } else {
+    mount.innerHTML = '<p class="cap">No fills.</p>';
+  }
+})();
+
+// ---- depth: imbalance strip + scrubbed ladder ------------------------------
+const scrub = document.getElementById("scrub"), scrubLabel = document.getElementById("scrub-label");
+if (DEPTH.length) {
+  scrub.max = DEPTH.length - 1;
+  drawImbalance();
+  drawLadder(DEPTH.length - 1);
+  scrub.value = DEPTH.length - 1;
+  scrub.addEventListener("input", () => { drawImbalance(); drawLadder(+scrub.value); });
+} else {
+  document.getElementById("imbalance").innerHTML = '<p class="cap">No depth frames recorded.</p>';
+}
+function sideSum(a) { let s = 0; for (const l of a) s += l[1]; return s; }
+function drawImbalance() {
+  const W = 1080, H = 90, M = {t: 8, r: 12, b: 8, l: 60};
+  const iw = W - M.l - M.r, ih = H - M.t - M.b;
+  let hi = 1;
+  for (const f of DEPTH) hi = Math.max(hi, sideSum(f.b), sideSum(f.a));
+  const x = lin(0, DEPTH.length - 1, M.l, M.l + iw), y = lin(-hi, hi, M.t + ih, M.t);
+  const wrap = document.getElementById("imbalance"); wrap.innerHTML = "";
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`, style: "cursor:col-resize"});
+  svg.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: y(0), y2: y(0), class: "axisline"}));
+  let bd = "M", ad = "M";
+  DEPTH.forEach((f, i) => { bd += x(i).toFixed(1) + " " + y(sideSum(f.b)).toFixed(1) + " L"; ad += x(i).toFixed(1) + " " + y(-sideSum(f.a)).toFixed(1) + " L"; });
+  bd = bd.slice(0, -1); ad = ad.slice(0, -1);
+  svg.appendChild(el("path", {d: bd, fill: "none", stroke: "var(--bid)", "stroke-width": 1.5}));
+  svg.appendChild(el("path", {d: ad, fill: "none", stroke: "var(--ask)", "stroke-width": 1.5}));
+  const sx = x(+scrub.value);
+  svg.appendChild(el("line", {x1: sx, x2: sx, y1: M.t, y2: M.t + ih, class: "crosshair"}));
+  svg.addEventListener("pointerdown", startScrub); svg.addEventListener("pointermove", ev => { if (ev.buttons) moveScrub(ev, svg, W, M, iw); });
+  function startScrub(ev) { moveScrub(ev, svg, W, M, iw); }
+  wrap.appendChild(svg);
+}
+function moveScrub(ev, svg, W, M, iw) {
+  const rect = svg.getBoundingClientRect();
+  const vbX = (ev.clientX - rect.left) / rect.width * W;
+  let i = Math.round((vbX - M.l) / iw * (DEPTH.length - 1));
+  i = Math.max(0, Math.min(DEPTH.length - 1, i));
+  scrub.value = i; drawImbalance(); drawLadder(i);
+}
+function drawLadder(i) {
+  const f = DEPTH[i];
+  scrubLabel.textContent = fmtTime(f.t);
+  const W = 1080, H = 260, M = {t: 10, r: 12, b: 26, l: 60};
+  const iw = W - M.l - M.r, ih = H - M.t - M.b, midX = M.l + iw / 2;
+  // cumulative depth from the touch outward
+  const bids = f.b.map(l => l.slice()), asks = f.a.map(l => l.slice());
+  let cum = 0; const bc = bids.map(l => { cum += l[1]; return [l[0], cum]; });
+  cum = 0; const ac = asks.map(l => { cum += l[1]; return [l[0], cum]; });
+  const maxCum = Math.max(1, bc.length ? bc[bc.length - 1][1] : 0, ac.length ? ac[ac.length - 1][1] : 0);
+  const allP = bids.concat(asks).map(l => l[0]);
+  const pLo = allP.length ? Math.min(...allP) : 0, pHi = allP.length ? Math.max(...allP) : 1;
+  const y = lin(pLo, pHi, M.t + ih, M.t);
+  const halfW = iw / 2;
+  const wrap = document.getElementById("ladder"); wrap.innerHTML = "";
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`});
+  // price (y) ticks
+  for (const t of niceTicks(pLo, pHi, 5)) { const yy = y(t); const g = el("g", {class: "tick"}); g.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: yy, y2: yy})); const tx = el("text", {x: M.l - 8, y: yy + 4, "text-anchor": "end"}); tx.textContent = num(t, 2); g.appendChild(tx); svg.appendChild(g); }
+  svg.appendChild(el("line", {x1: midX, x2: midX, y1: M.t, y2: M.t + ih, class: "axisline"}));
+  const barH = Math.max(2, ih / Math.max(bc.length, ac.length, 1) * 0.7);
+  // bids grow left from mid
+  bc.forEach(l => { const w = l[1] / maxCum * halfW; svg.appendChild(el("rect", {x: midX - w, y: y(l[0]) - barH / 2, width: w, height: barH, fill: "var(--bid)", "fill-opacity": .8, rx: 1})); });
+  ac.forEach(l => { const w = l[1] / maxCum * halfW; svg.appendChild(el("rect", {x: midX, y: y(l[0]) - barH / 2, width: w, height: barH, fill: "var(--ask)", "fill-opacity": .8, rx: 1})); });
+  const lb = el("text", {x: midX - halfW, y: H - 8, "text-anchor": "start"}); lb.setAttribute("fill", "var(--bid)"); lb.setAttribute("font-size", "11"); lb.setAttribute("font-family", "var(--mono)"); lb.textContent = "◀ bids  " + num(bc.length ? bc[bc.length - 1][1] : 0, 0) + " sh"; svg.appendChild(lb);
+  const la = el("text", {x: midX + halfW, y: H - 8, "text-anchor": "end"}); la.setAttribute("fill", "var(--ask)"); la.setAttribute("font-size", "11"); la.setAttribute("font-family", "var(--mono)"); la.textContent = num(ac.length ? ac[ac.length - 1][1] : 0, 0) + " sh  asks ▶"; svg.appendChild(la);
+  wrap.appendChild(svg);
+}
+
+// ---- tables (accessibility / exact numbers) --------------------------------
+(function tables() {
+  const rows = [
+    ["Initial capital", money(S.initial_capital)], ["Final cash", money(S.final_cash)],
+    ["Realized PnL", signMoney(S.realized_pnl)], ["Settlement PnL", signMoney(S.settlement_pnl)],
+    ["Fees", money(S.fees)], ["Total PnL", signMoney(S.total_pnl)],
+    ["Buy & hold PnL", signMoney(DATA.bench_final_pnl)], ["Alpha vs hold", signMoney(S.total_pnl - DATA.bench_final_pnl)],
+    ["Settlement", S.settlement + (S.redemption != null ? " @ " + num(S.redemption, 2) : "")],
+    ["Sharpe", num(ST.sharpe, 3) + " ann · " + num(ST.sharpe_raw, 3) + " raw"],
+    ["Sortino", num(ST.sortino, 3) + " ann · " + num(ST.sortino_raw, 3) + " raw"],
+    ["Ann. volatility", pct(ST.annual_vol)],
+    ["Max drawdown", pct(ST.max_drawdown.frac) + " (" + money(ST.max_drawdown.dollars) + ")"],
+    ["Exposure", pct(ST.exposure)], ["Turnover", num(ST.turnover, 4) + "×"],
+    ["Grid", ST.bar_seconds + "s (" + ST.bars.toLocaleString() + " bars)"],
+  ];
+  // The per-fill detail lives in the Trades blotter now; this table is the
+  // scalar summary only.
+  const html = '<table class="data"><tbody>' + rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join("") + "</tbody></table>";
+  document.getElementById("tables").innerHTML = html;
+})();
+
+// ---- chrome ----------------------------------------------------------------
+document.getElementById("subtitle").textContent = DATA.title_sub || "";
+if (HAS_QUOTES) document.getElementById("quote-legend").style.display = "";
+document.getElementById("foot").innerHTML =
+  `Mark-to-market equity marks the open position at the live mid; settlement is a terminal event. ` +
+  `Return statistics (Sharpe, Sortino, volatility) are computed on the equity curve resampled to a uniform <b>${num(ST.bar_seconds, 0)}s</b> grid — chosen from the run's span, <b>${ST.bars.toLocaleString()}</b> bars — and annualized at ` +
+  `${(ST.bars_per_year).toLocaleString()} periods/year (risk-free 0); un-annualized per-bar Sharpe/Sortino are shown alongside. Drawdown, exposure and turnover are on the raw event-timed path. ` +
+  `Generated by <b>pmbt</b>.`;
+const themeBtn = document.getElementById("theme");
+themeBtn.addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+});
+</script>
+</body>
+</html>

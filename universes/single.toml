@@ -1,0 +1,48 @@
+# A reusable simulation profile — everything a `run` or `compare` needs, so the
+# command line stays short:
+#
+#   pmbt run buyandhold data/telonex/<token>_<date>_book_snapshot_full.parquet \
+#       --config universes/single.toml --resolution 1
+#
+# Any TOML with a [simulation] section works as a profile, including a whole
+# universe file (its market entries are ignored). CLI flags override whatever is
+# set here, which in turn overrides the built-in defaults.
+
+[simulation]
+# Execution model: "naive" (full size at the touch) or "sweep" (walks the
+# ladder, fill-or-kill) — sweep is the realistic one.
+fill = "sweep"
+
+# Observer placement: "zero" | "dublin" | "retail-eu" | "us-east". Delays every
+# order by the preset's feed + transit time before it executes.
+latency = "dublin"
+
+# Market category. Drives BOTH exchange effects below — sports gets a 3s taker
+# delay and a 5% fee tier; crypto/finance 250ms and 7%/4%; geopolitics is
+# fee-free. Omitting it makes taker_delay and fees no-ops, so a run silently
+# becomes frictionless: set it whenever you want realistic costs.
+# (`batch` ignores this — its markets each declare their own category.)
+category = "sports"
+
+# Show the strategy each snapshot only as late as a real observer would receive
+# it — closes the lookahead channel for time-aware strategies.
+perception = false
+
+# The exchange's category-based hold on marketable orders. Off = the
+# counterfactual "what if there were no hold".
+taker_delay = true
+
+# The category-based taker fee (qty × rate × p(1−p), makers pay nothing).
+# Off = the free-trading counterfactual.
+fees = true
+
+# How much of the line ahead of a RESTING order to model. The book aggregates
+# by price, so the displayed size at a level IS the queue — an order joining it
+# starts behind exactly that much. What we cannot observe is whether the cancels
+# that clear a level came from ahead of us or behind, so:
+#   proportional  join the back; trades drain the line, cancels advance us in
+#                 proportion to how much of the level they removed  (default)
+#   front         no queue at all — an UPPER BOUND on maker fills
+#   trades-only   only trades advance us — a LOWER BOUND
+# Marketable orders are unaffected either way.
+queue = "proportional"

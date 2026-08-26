@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ · pmbt batch</title>
+<style>
+  /* Terminal palette — dark-first; series hues are the validated reference set. */
+  :root {
+    color-scheme: dark;
+    --plane:#090c11; --surface:#0f141b; --surface-2:#141b24;
+    --text-1:#e8eaed; --text-2:#9aa4af; --muted:#5b6672;
+    --grid:#19212b; --axis:#2a3542; --border:#1e2731;
+    --accent:#f5a623; --accent-dim:rgba(245,166,35,0.13);
+    --pnl:#199e70; --yes:#3987e5; --good:#2fb170; --critical:#e5484d;
+    --good-text:#3fd08a; --neg-text:#ff6060;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --plane:#eeeeea; --surface:#ffffff; --surface-2:#f7f7f3;
+    --text-1:#14171c; --text-2:#4a5560; --muted:#8b939c;
+    --grid:#e7e7e0; --axis:#c9c9bf; --border:#e2e2da;
+    --accent:#a86400; --accent-dim:rgba(168,100,0,0.10);
+    --pnl:#0f9d63; --yes:#2a78d6; --good:#0f9d63; --critical:#c8353a;
+    --good-text:#0a7c43; --neg-text:#c8353a;
+  }
+  * { box-sizing: border-box; }
+  :root { --mono: ui-monospace, "SF Mono", "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace; --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { margin:0; background:var(--plane); color:var(--text-1); font:13px/1.5 var(--mono); -webkit-font-smoothing:antialiased; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .cmdbar { position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:14px; padding:0 18px; height:44px; background:var(--surface); border-bottom:1px solid var(--border); }
+  .brand { font-weight:700; letter-spacing:.18em; font-size:13px; color:var(--accent); padding-right:14px; border-right:1px solid var(--border); }
+  .cmd-title { font-size:13px; font-weight:600; color:var(--text-1); }
+  .cmd-sub { font-size:12px; color:var(--muted); }
+  .spacer { flex:1; }
+  .theme-toggle { border:1px solid var(--border); background:var(--surface-2); color:var(--text-2); padding:5px 11px; cursor:pointer; font:11px var(--mono); letter-spacing:.12em; border-radius:2px; }
+  .theme-toggle:hover { color:var(--accent); border-color:var(--accent); }
+
+  .wrap { max-width:1200px; margin:0 auto; padding:18px 18px 8px; }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:3px; margin-top:14px; }
+  .phead { display:flex; align-items:center; gap:10px; padding:9px 14px; border-bottom:1px solid var(--border); }
+  .phead::before { content:""; width:3px; height:13px; background:var(--accent); border-radius:1px; }
+  .ph-label { font-size:11px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; color:var(--text-1); }
+  .ph-tag { margin-left:auto; font-size:11px; color:var(--muted); }
+  .pbody { padding:14px; }
+  .cap { color:var(--text-2); font:12px/1.55 var(--sans); margin:0 0 12px; max-width:92ch; }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:1px; background:var(--border); border:1px solid var(--border); border-radius:3px; overflow:hidden; }
+  .tile { background:var(--surface); padding:12px 14px; }
+  .tile .k { color:var(--muted); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+  .tile .v { font-size:21px; font-weight:600; margin-top:5px; letter-spacing:-0.01em; font-variant-numeric:tabular-nums; }
+  .tile .v.pos { color:var(--good-text); } .tile .v.neg { color:var(--neg-text); }
+  .tile .note { color:var(--muted); font-size:11px; margin-top:3px; font-variant-numeric:tabular-nums; }
+  .pos { color:var(--good-text); } .neg { color:var(--neg-text); }
+
+  svg { display:block; width:100%; height:auto; overflow:visible; }
+  .tick text { fill:var(--muted); font-size:10px; font-variant-numeric:tabular-nums; font-family:var(--mono); }
+  .tick line { stroke:var(--grid); stroke-width:1; }
+  .axisline { stroke:var(--axis); stroke-width:1; }
+  .series { fill:none; stroke-width:2; }
+  .crosshair { stroke:var(--accent); stroke-width:1; stroke-dasharray:3 3; opacity:.7; }
+  .tooltip { position:fixed; pointer-events:none; z-index:30; opacity:0; transition:opacity .08s; background:var(--surface-2); border:1px solid var(--border); border-radius:3px; padding:8px 10px; font:11px var(--mono); box-shadow:0 6px 22px rgba(0,0,0,.45); min-width:150px; }
+  .tooltip .tt-t { color:var(--accent); margin-bottom:5px; }
+
+  table.data { border-collapse:collapse; width:100%; font-size:11.5px; margin-top:4px; }
+  table.data th, table.data td { text-align:right; padding:5px 12px; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; }
+  table.data th:first-child, table.data td:first-child { text-align:left; }
+  table.data th { color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.08em; font-size:10px; }
+  table.data tbody tr:hover td { background:var(--surface-2); }
+  table.data tfoot th { color:var(--text-2); border-top:1px solid var(--axis); font-variant-numeric:tabular-nums; }
+  td.pos { color:var(--good-text); } td.neg { color:var(--neg-text); }
+
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:11px; color:var(--text-2); margin-bottom:10px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; }
+  details { margin-top:14px; border-top:1px solid var(--border); padding-top:10px; }
+  summary { cursor:pointer; color:var(--text-2); font-size:12px; list-style:none; }
+  summary::before { content:"▸ "; color:var(--accent); }
+  details[open] summary::before { content:"▾ "; }
+  summary:hover { color:var(--text-1); }
+
+  .statusbar { max-width:1200px; margin:14px auto 0; padding:10px 18px; border-top:1px solid var(--border); color:var(--muted); font:11px/1.7 var(--mono); }
+  .statusbar b { color:var(--text-2); font-weight:600; }
+</style>
+</head>
+<body>
+<div class="cmdbar">
+  <span class="brand">PMBT</span>
+  <span class="cmd-title">__TITLE__</span>
+  <span class="cmd-sub">universe · batch</span>
+  <span class="spacer"></span>
+  <button class="theme-toggle" id="theme">◐ THEME</button>
+</div>
+
+<main class="wrap">
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Aggregate</span><span class="ph-tag">universe total</span></div>
+    <div class="pbody"><div class="tiles" id="tiles"></div></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">PnL attribution</span><span class="ph-tag">where the total comes from</span></div>
+    <div class="pbody">
+      <p class="cap">The universe total decomposed into realized trading, settlement, and fees.</p>
+      <div id="waterfall"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Combined cumulative PnL</span><span class="ph-tag">shared calendar timeline</span></div>
+    <div class="pbody">
+      <p class="cap">Every market's mark-to-market PnL summed on a shared timeline — the portfolio's running total as markets trade and resolve.</p>
+      <div id="combined"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><span class="ph-label">Per-market contribution</span><span class="ph-tag">largest first</span></div>
+    <div class="pbody">
+      <p class="cap">Each market's total PnL, largest first. Bars diverge from zero; hover for the realized / settlement / fees split.</p>
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--good)"></i>gain</span>
+        <span><i class="swatch" style="background:var(--critical)"></i>loss</span>
+      </div>
+      <div id="bars"></div>
+      <details>
+        <summary>Per-market table</summary>
+        <div id="table"></div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<div class="statusbar" id="foot"></div>
+<div class="tooltip" id="tt"></div>
+
+<script id="report-data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("report-data").textContent);
+const A = DATA.agg, C = DATA.combined, MK = DATA.markets;
+const tt = document.getElementById("tt");
+const SVGNS = "http://www.w3.org/2000/svg";
+const el = (n, a = {}) => { const e = document.createElementNS(SVGNS, n); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const lin = (d0, d1, r0, r1) => v => d1 === d0 ? (r0 + r1) / 2 : r0 + (v - d0) * (r1 - r0) / (d1 - d0);
+const signMoney = v => (v >= 0 ? "+" : "−") + "$" + Math.abs(v).toLocaleString(undefined, {maximumFractionDigits: 2});
+const money = v => "$" + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const cls = v => v >= 0 ? "pos" : "neg";
+function fmtTime(ms) { return new Date(ms).toLocaleString(undefined, {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"}); }
+function niceTicks(min, max, count) {
+  if (min === max) return [min];
+  const span = max - min, s0 = span / count, mag = Math.pow(10, Math.floor(Math.log10(s0))), n = s0 / mag;
+  const step = (n >= 5 ? 5 : n >= 2 ? 2 : 1) * mag, out = [];
+  for (let t = Math.ceil(min / step) * step; t <= max + 1e-9; t += step) out.push(t);
+  return out;
+}
+
+// ---- aggregate tiles -------------------------------------------------------
+function tile(k, v, c, note) { return `<div class="tile"><div class="k">${k}</div><div class="v ${c || ""}">${v}</div>${note ? `<div class="note">${note}</div>` : ""}</div>`; }
+document.getElementById("tiles").innerHTML = [
+  tile("Total PnL", signMoney(A.total_pnl), cls(A.total_pnl), `${A.markets} markets`),
+  tile("Realized", signMoney(A.realized_pnl), cls(A.realized_pnl), "trading"),
+  tile("Settlement", signMoney(A.settlement_pnl), cls(A.settlement_pnl), "redemptions"),
+  tile("Fees", "−" + money(A.fees), A.fees > 0 ? "neg" : "", "taker"),
+  tile("Settled", String(A.settled), "", `${A.unresolved} open · ${A.nothing_held} flat`),
+  tile("Fills", String(A.fills), "", `${A.rejections} rejections`),
+].join("");
+
+// ---- aggregate waterfall ---------------------------------------------------
+(function waterfall() {
+  const steps = [
+    {k: "Realized", v: A.realized_pnl}, {k: "Settlement", v: A.settlement_pnl},
+    {k: "Fees", v: -A.fees}, {k: "Total", v: A.total_pnl, total: true},
+  ];
+  const W = 1080, H = 180, M = {t: 10, r: 12, b: 40, l: 64}, iw = W - M.l - M.r, ih = H - M.t - M.b;
+  let lo = 0, hi = 0, run = 0;
+  for (const s of steps) { if (s.total) { lo = Math.min(lo, 0, s.v); hi = Math.max(hi, s.v); } else { lo = Math.min(lo, run, run + s.v); hi = Math.max(hi, run, run + s.v); run += s.v; } }
+  const pad = (hi - lo) * 0.15 || 1; lo -= pad; hi += pad;
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`}), y = lin(lo, hi, M.t + ih, M.t);
+  for (const t of niceTicks(lo, hi, 4)) { const yy = y(t), g = el("g", {class: "tick"}); g.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: yy, y2: yy})); const tx = el("text", {x: M.l - 8, y: yy + 4, "text-anchor": "end"}); tx.textContent = signMoney(t); g.appendChild(tx); svg.appendChild(g); }
+  svg.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: y(0), y2: y(0), class: "axisline"}));
+  const gap = iw / steps.length, bw = gap * 0.5; run = 0;
+  steps.forEach((s, i) => {
+    const cx = M.l + gap * (i + 0.5), base = s.total ? 0 : run, top = s.total ? s.v : run + s.v;
+    const yTop = y(Math.max(base, top)), yBot = y(Math.min(base, top));
+    const color = s.total ? "var(--accent)" : s.v >= 0 ? "var(--good)" : "var(--critical)";
+    svg.appendChild(el("rect", {x: cx - bw / 2, y: yTop, width: bw, height: Math.max(1, yBot - yTop), rx: 2, fill: color}));
+    const lab = el("text", {x: cx, y: yTop - 6, "text-anchor": "middle"}); lab.setAttribute("fill", "var(--text-2)"); lab.setAttribute("font-size", "11"); lab.setAttribute("font-family", "var(--mono)"); lab.textContent = signMoney(s.v); svg.appendChild(lab);
+    const nm = el("text", {x: cx, y: H - 20, "text-anchor": "middle"}); nm.setAttribute("fill", "var(--muted)"); nm.setAttribute("font-size", "11"); nm.setAttribute("font-family", "var(--mono)"); nm.setAttribute("letter-spacing", ".06em"); nm.textContent = s.k.toUpperCase(); svg.appendChild(nm);
+    if (!s.total) run += s.v;
+  });
+  document.getElementById("waterfall").appendChild(svg);
+})();
+
+// ---- combined cumulative PnL curve -----------------------------------------
+(function combined() {
+  const mount = document.getElementById("combined");
+  if (!C.length) { mount.innerHTML = '<p class="cap">No series recorded.</p>'; return; }
+  const W = 1080, H = 240, M = {t: 10, r: 12, b: 24, l: 64}, iw = W - M.l - M.r, ih = H - M.t - M.b;
+  const t0 = C[0].t, t1 = C[C.length - 1].t;
+  let lo = 0, hi = 0; for (const p of C) { lo = Math.min(lo, p.p); hi = Math.max(hi, p.p); }
+  const pad = (hi - lo) * 0.1 || 1; lo -= pad; hi += pad;
+  const x = lin(t0, t1, M.l, M.l + iw), y = lin(lo, hi, M.t + ih, M.t);
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`});
+  for (const t of niceTicks(lo, hi, 5)) { const yy = y(t), g = el("g", {class: "tick"}); g.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: yy, y2: yy})); const tx = el("text", {x: M.l - 8, y: yy + 4, "text-anchor": "end"}); tx.textContent = signMoney(t); g.appendChild(tx); svg.appendChild(g); }
+  for (const t of niceTicks(t0, t1, 6)) { const xx = x(t), g = el("g", {class: "tick"}); g.appendChild(el("line", {x1: xx, x2: xx, y1: M.t, y2: M.t + ih})); const tx = el("text", {x: xx, y: H - 6, "text-anchor": "middle"}); tx.textContent = fmtTime(t); g.appendChild(tx); svg.appendChild(g); }
+  if (lo < 0 && hi > 0) svg.appendChild(el("line", {x1: M.l, x2: M.l + iw, y1: y(0), y2: y(0), class: "axisline"}));
+  let area = "M" + x(C[0].t) + " " + y(0) + " ", line = "";
+  C.forEach((p, i) => { area += "L" + x(p.t).toFixed(1) + " " + y(p.p).toFixed(1) + " "; line += (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.p).toFixed(1) + " "; });
+  area += "L" + x(C[C.length - 1].t).toFixed(1) + " " + y(0).toFixed(1) + " Z";
+  svg.appendChild(el("path", {d: area, fill: "var(--pnl)", "fill-opacity": .12, stroke: "none"}));
+  svg.appendChild(el("path", {d: line, class: "series", stroke: "var(--pnl)"}));
+  const cross = el("line", {class: "crosshair", y1: M.t, y2: M.t + ih, x1: -9, x2: -9}); svg.appendChild(cross);
+  svg.addEventListener("pointermove", ev => {
+    const rect = svg.getBoundingClientRect(), vbX = (ev.clientX - rect.left) / rect.width * W;
+    const t = t0 + (vbX - M.l) / iw * (t1 - t0);
+    let lo2 = 0, hi2 = C.length - 1; while (lo2 < hi2) { const m = (lo2 + hi2) >> 1; if (C[m].t < t) lo2 = m + 1; else hi2 = m; }
+    const p = C[lo2]; cross.setAttribute("x1", x(p.t)); cross.setAttribute("x2", x(p.t));
+    tt.innerHTML = `<div class="tt-t">${fmtTime(p.t)}</div><div style="font-weight:600" class="${cls(p.p)}">${signMoney(p.p)}</div>`;
+    let left = ev.clientX + 14; if (left + 150 > innerWidth) left = ev.clientX - 150; tt.style.left = left + "px"; tt.style.top = (ev.clientY + 14) + "px"; tt.style.opacity = 1;
+  });
+  svg.addEventListener("pointerleave", () => { cross.setAttribute("x1", -9); tt.style.opacity = 0; });
+  mount.appendChild(svg);
+})();
+
+// ---- per-market contribution bars ------------------------------------------
+(function bars() {
+  const mount = document.getElementById("bars");
+  const rowH = 26, W = 1080, M = {t: 8, r: 12, b: 8, l: 120}, iw = W - M.l - M.r;
+  const H = M.t + M.b + MK.length * rowH;
+  let mn = 0, mx = 0; for (const m of MK) { mn = Math.min(mn, m.total); mx = Math.max(mx, m.total); }
+  const span = Math.max(Math.abs(mn), Math.abs(mx), 1);
+  const x = lin(-span, span, M.l, M.l + iw), zero = x(0);
+  const svg = el("svg", {viewBox: `0 0 ${W} ${H}`});
+  svg.appendChild(el("line", {x1: zero, x2: zero, y1: M.t, y2: H - M.b, class: "axisline"}));
+  MK.forEach((m, i) => {
+    const yy = M.t + i * rowH, bx = x(m.total), gain = m.total >= 0;
+    const rect = el("rect", {x: gain ? zero : bx, y: yy + 4, width: Math.max(1, Math.abs(bx - zero)), height: rowH - 10, rx: 2, fill: gain ? "var(--good)" : "var(--critical)"});
+    rect.addEventListener("pointermove", ev => {
+      tt.innerHTML = `<div class="tt-t">${m.short} · ${m.category}</div>` +
+        `<div>total <b class="${cls(m.total)}">${signMoney(m.total)}</b></div>` +
+        `<div>realized ${signMoney(m.realized)}</div><div>settlement ${signMoney(m.settlement)}</div><div>fees −${money(m.fees)}</div>`;
+      let left = ev.clientX + 14; if (left + 170 > innerWidth) left = ev.clientX - 170; tt.style.left = left + "px"; tt.style.top = (ev.clientY + 14) + "px"; tt.style.opacity = 1;
+    });
+    rect.addEventListener("pointerleave", () => tt.style.opacity = 0);
+    svg.appendChild(rect);
+    const name = el("text", {x: M.l - 10, y: yy + rowH / 2 + 4, "text-anchor": "end"}); name.setAttribute("fill", "var(--text-2)"); name.setAttribute("font-size", "12"); name.setAttribute("font-family", "var(--mono)"); name.textContent = m.short; svg.appendChild(name);
+    const val = el("text", {x: gain ? bx + 6 : bx - 6, y: yy + rowH / 2 + 4, "text-anchor": gain ? "start" : "end"}); val.setAttribute("fill", "var(--muted)"); val.setAttribute("font-size", "11"); val.setAttribute("font-family", "var(--mono)"); val.textContent = signMoney(m.total); svg.appendChild(val);
+  });
+  mount.appendChild(svg);
+})();
+
+// ---- per-market table ------------------------------------------------------
+document.getElementById("table").innerHTML =
+  '<table class="data"><thead><tr><th>Market</th><th>Category</th><th>Realized</th><th>Settlement</th><th>Fees</th><th>Total</th><th>State</th><th>Fills</th></tr></thead><tbody>' +
+  MK.map(m => `<tr><td title="${m.id}">${m.short}</td><td>${m.category}</td><td>${signMoney(m.realized)}</td><td>${signMoney(m.settlement)}</td><td>−${money(m.fees)}</td><td class="${cls(m.total)}">${signMoney(m.total)}</td><td>${m.state}</td><td>${m.fills}</td></tr>`).join("") +
+  `</tbody><tfoot><tr><th>Total</th><th></th><th>${signMoney(A.realized_pnl)}</th><th>${signMoney(A.settlement_pnl)}</th><th>−${money(A.fees)}</th><th class="${cls(A.total_pnl)}">${signMoney(A.total_pnl)}</th><th></th><th>${A.fills}</th></tr></tfoot></table>`;
+
+document.getElementById("foot").innerHTML =
+  "Each market runs its own engine from its own initial capital; the universe total is their sum. The combined curve sums per-market mark-to-market PnL on a shared calendar timeline (each market contributes 0 before its first snapshot, its settled total after). Generated by <b>pmbt</b>.";
+document.getElementById("theme").addEventListener("click", () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+});
+</script>
+</body>
+</html>
