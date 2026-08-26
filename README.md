@@ -2,7 +2,7 @@
 
 Backtests trading strategies over **full order-book history** from Polymarket's CLOB — and is built, seam by seam, to grow into a live paper-trading engine on the same core.
 
-> **Status: active work-in-progress.** The historical backtester is complete and heavily tested; live paper trading and alternative-data feeds are the next milestones (see [Roadmap](#roadmap)). This is both a portfolio piece and a tool I use to develop strategies, so it's held to a production bar: strict invariants, fail-fast boundaries, and doc comments that explain *why*.
+> **Status: active work-in-progress.** The historical backtester is complete and heavily tested; live paper trading and alternative-data feeds are the next milestones (see [Roadmap](#roadmap)).
 
 ```console
 $ cargo run -- run buyandhold data/telonex/<token>_<date>_book_snapshot_full.parquet \
