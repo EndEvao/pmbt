@@ -1,6 +1,6 @@
 use std::env;
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use pmbt::accumulator::Accumulator;
@@ -231,7 +231,7 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
     let mut strategy = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
     // One Telonex file is one token's book, so the file choice *is* the
     // outcome choice — no outcome argument.
-    let feed = open_feed(&path)?;
+    let feed = open_feed(&[PathBuf::from(&path)])?;
 
     let engine = Engine::new(
         INITIAL_CAPITAL,
@@ -451,7 +451,7 @@ fn cmd_compare(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
     let mut runs: Vec<report::compare::CompareRun> = Vec::with_capacity(configs.len());
     for (label, detail, resolved) in &configs {
         let mut strategy = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
-        let feed = open_feed(&path)?;
+        let feed = open_feed(&[PathBuf::from(&path)])?;
         let engine = Engine::new(
             INITIAL_CAPITAL,
             resolved.fill()?,
@@ -658,7 +658,7 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
     let mut runs: Vec<report::batch::MarketRun> = Vec::new();
     for entry in &universe.markets {
         let mut strategy = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
-        let feed = open_feed(entry.data_file(&universe.data_dir)?)?;
+        let feed = open_feed(&entry.data_files(&universe.data_dir)?)?;
 
         // The preset covers observer placement; the exchange's hold comes
         // from this market's category — the universe layer doing its job.
@@ -779,16 +779,17 @@ fn parse_sim_flag(
     Ok(true)
 }
 
-/// Open a book file together with its sibling trades tape.
+/// Open one or more of a market's consecutive book files — chained into one
+/// continuous feed — together with each day's sibling trades tape.
 ///
-/// A missing tape is not fatal: the book replays fine without it, and only
-/// resting (maker) orders need trades to fill. So we warn and carry on rather
-/// than refusing to run a marketable backtest over a book that happens to have
-/// no tape beside it. A malformed tape still fails loudly.
-fn open_feed(book_path: impl AsRef<Path>) -> Result<FileFeed, Box<dyn Error>> {
-    let book_path = book_path.as_ref();
-    let (feed, tape_found) = MergedFeed::from_book_path_optional(book_path)?;
-    if !tape_found {
+/// A single path is the ordinary one-day backtest (a chain of one). A missing
+/// tape is not fatal: the book replays fine without it, and only resting (maker)
+/// orders need trades to fill. So we warn per missing day and carry on rather
+/// than refusing a marketable backtest over a book with no tape beside it. A
+/// malformed tape still fails loudly.
+fn open_feed(book_paths: &[PathBuf]) -> Result<FileFeed, Box<dyn Error>> {
+    let (feed, missing_tapes) = MergedFeed::from_book_paths(book_paths)?;
+    for book_path in &missing_tapes {
         println!(
             "note: no trades file beside {} — replaying the book only \
              (resting orders cannot fill without a tape)",
@@ -922,6 +923,17 @@ fn cmd_convert(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
     );
     for asset in &report.assets {
         println!("  {:>9} rows  {}", asset.rows, asset.asset_id);
+    }
+
+    // The trade tape, per asset — empty on thin markets that never printed.
+    let trades: u64 = report.trades.iter().map(|a| a.rows).sum();
+    if trades > 0 {
+        println!(
+            "trades: {trades} prints across {} assets",
+            report.trades.len()
+        );
+    } else {
+        println!("trades: none in this capture");
     }
 
     // Gap accounting: the recordings are known to be missing timeframes, and

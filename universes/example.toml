@@ -1,9 +1,7 @@
-# A sample universe of one resolved geopolitics market ("Will the US strike
-# Iran next?" — resolved No, so the traded Yes token redeemed at $0).
-# Geopolitics/world-events are the fee-free tier.
-#
-# Backtest data is not committed: point `data_dir` at your own Telonex pull or
-# converted capture holding this market's book_snapshot_full + trades.
+# The sample market that ships with the repo's dev data: one resolved
+# geopolitics market ("Will the US strike Iran next?" — resolved No, so the
+# traded Yes token redeemed at $0). Geopolitics/world-events are the fee-free
+# tier.
 name = "example"
 data_dir = "data/telonex_example"
 

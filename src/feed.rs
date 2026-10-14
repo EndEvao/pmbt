@@ -153,39 +153,129 @@ impl Iterator for Tape {
     }
 }
 
-/// A feed over the on-disk Telonex pair, with or without the trades tape.
-pub type FileFeed = MergedFeed<TelonexBookSource, Tape>;
+/// Streams several same-market day-file sources (`S`) as one continuous,
+/// time-ordered stream, guarding timestamp monotonicity **across the file seam**.
+/// Each inner source only guards order *within* its own file — it resets its
+/// fence to `i64::MIN` per file — so consecutive daily files that overlap or
+/// arrive out of date order would slip past silently; this guard is what catches
+/// that (the whole point of the feed hardening was to make backwards-time
+/// unconstructable).
+///
+/// Sources are opened up front (a parquet open reads only the footer, not the
+/// data — cheap, and a bad file fails at construction rather than mid-stream). A
+/// chain of **one** source yields exactly what that source yields alone, so every
+/// single-file run stays byte-identical. `ts_of` extracts an item's instant — a
+/// plain `fn` pointer rather than a trait, keeping the public surface to the type
+/// aliases below.
+pub struct Chained<S, T>
+where
+    S: Iterator<Item = Result<T, LoadError>>,
+{
+    remaining: std::vec::IntoIter<S>,
+    current: Option<S>,
+    last_ts: i64,
+    ts_of: fn(&T) -> i64,
+}
 
-impl MergedFeed<TelonexBookSource, Tape> {
-    /// Open a book file and its sibling trades file. The trades path is the book
-    /// path with `_book_snapshot_full` swapped for `_trades` — the pairing
-    /// `scripts/telonex_pull.py` writes.
-    pub fn from_book_path(book_path: impl AsRef<Path>) -> Result<Self, LoadError> {
-        let book_path = book_path.as_ref();
-        Ok(Self::new(
-            TelonexBookSource::from_path(book_path)?,
-            Tape::Present(TelonexTradesSource::from_path(sibling_trades_path(
-                book_path,
-            ))?),
-        ))
+impl<S, T> Chained<S, T>
+where
+    S: Iterator<Item = Result<T, LoadError>>,
+{
+    fn from_sources(sources: Vec<S>, ts_of: fn(&T) -> i64) -> Self {
+        Self {
+            remaining: sources.into_iter(),
+            current: None,
+            last_ts: i64::MIN,
+            ts_of,
+        }
+    }
+}
+
+impl<S, T> Iterator for Chained<S, T>
+where
+    S: Iterator<Item = Result<T, LoadError>>,
+{
+    type Item = Result<T, LoadError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.current.is_none() {
+                // Roll onto the next file; `None` here means every file drained.
+                self.current = Some(self.remaining.next()?);
+            }
+            match self.current.as_mut().expect("just set").next() {
+                Some(Ok(item)) => {
+                    let ts = (self.ts_of)(&item);
+                    // `<` not `<=`: equal timestamps are allowed (non-decreasing),
+                    // matching each source's own within-file guard.
+                    if ts < self.last_ts {
+                        return Some(Err(LoadError::OutOfOrder {
+                            previous: self.last_ts,
+                            got: ts,
+                        }));
+                    }
+                    self.last_ts = ts;
+                    return Some(Ok(item));
+                }
+                Some(Err(err)) => return Some(Err(err)),
+                None => self.current = None, // this file drained — pull the next
+            }
+        }
+    }
+}
+
+/// A market's consecutive daily book files, streamed as one book source.
+pub type ChainedBook = Chained<TelonexBookSource, MarketState>;
+/// Their sibling trades tapes, streamed as one trades source (missing days
+/// simply contribute no source, so the stream stays ordered).
+pub type ChainedTape = Chained<TelonexTradesSource, Trade>;
+
+impl ChainedBook {
+    /// Open an ordered list of book files (empty slice ⇒ an empty stream).
+    pub fn open(paths: &[PathBuf]) -> Result<Self, LoadError> {
+        let sources = paths
+            .iter()
+            .map(TelonexBookSource::from_path)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self::from_sources(sources, |s| s.timestamp))
+    }
+}
+
+/// A feed over one or more of a single market's on-disk Telonex day-files, each
+/// with or without its trades tape.
+pub type FileFeed = MergedFeed<ChainedBook, ChainedTape>;
+
+impl MergedFeed<ChainedBook, ChainedTape> {
+    /// Open an ordered list of a market's book files together with their sibling
+    /// trades tapes, as one continuous feed. Returns the feed and the book paths
+    /// whose sibling tape was missing (those days replay book-only). A malformed
+    /// (as opposed to absent) tape still fails.
+    ///
+    /// A single-element slice is the ordinary one-day backtest — a chain of one,
+    /// byte-identical to reading that file directly. The trades path for each book
+    /// is the book path with `_book_snapshot_full` swapped for `_trades`.
+    pub fn from_book_paths(book_paths: &[PathBuf]) -> Result<(Self, Vec<PathBuf>), LoadError> {
+        let book = ChainedBook::open(book_paths)?;
+        let mut tapes = Vec::new();
+        let mut missing = Vec::new();
+        for book_path in book_paths {
+            let trades_path = sibling_trades_path(book_path);
+            if trades_path.exists() {
+                tapes.push(TelonexTradesSource::from_path(trades_path)?);
+            } else {
+                missing.push(book_path.clone());
+            }
+        }
+        let tape = ChainedTape::from_sources(tapes, |t| t.timestamp);
+        Ok((Self::new(book, tape), missing))
     }
 
-    /// Like [`from_book_path`](Self::from_book_path), but tolerates a missing
-    /// tape: returns the feed plus whether trades were found, so the caller can
-    /// warn. A malformed (as opposed to absent) tape still fails.
+    /// One book file plus its sibling tape, tolerating a missing tape and
+    /// reporting whether it was found so the caller can warn.
     pub fn from_book_path_optional(book_path: impl AsRef<Path>) -> Result<(Self, bool), LoadError> {
-        let book_path = book_path.as_ref();
-        let book = TelonexBookSource::from_path(book_path)?;
-        let trades_path = sibling_trades_path(book_path);
-        let (tape, found) = if trades_path.exists() {
-            (
-                Tape::Present(TelonexTradesSource::from_path(trades_path)?),
-                true,
-            )
-        } else {
-            (Tape::Absent, false)
-        };
-        Ok((Self::new(book, tape), found))
+        let path = book_path.as_ref().to_path_buf();
+        let (feed, missing) = Self::from_book_paths(std::slice::from_ref(&path))?;
+        Ok((feed, missing.is_empty()))
     }
 }
 
@@ -555,6 +645,128 @@ mod conformance {
     fn replay_conforms() {
         check("Replay", replay);
     }
+
+    // --- chained multi-file sources -----------------------------------------
+
+    /// A `MergedFeed` whose book and trades sides are each a [`Chained`] over
+    /// two in-memory "day files" — the multi-file shape, without parquet.
+    type ChainedSpecFeed = MergedFeed<
+        Chained<std::vec::IntoIter<Result<MarketState, LoadError>>, MarketState>,
+        Chained<std::vec::IntoIter<Result<Trade, LoadError>>, Trade>,
+    >;
+
+    /// Split a spec at its midpoint into two day-files (both streams split at the
+    /// same index, so global order is preserved) and chain each side back. The
+    /// composed feed must behave exactly like [`merged`] — which `check` verifies.
+    fn chained(spec: &Spec) -> ChainedSpecFeed {
+        let mid = spec.len() / 2;
+        let book_file = |rows: &Spec| {
+            rows.iter()
+                .map(|(ts, _)| Ok(state(*ts)))
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        let trade_file = |rows: &Spec| {
+            rows.iter()
+                .flat_map(|(_, t)| t.iter().cloned().map(Ok))
+                .collect::<Vec<_>>()
+                .into_iter()
+        };
+        let books = Chained::from_sources(
+            vec![book_file(&spec[..mid]), book_file(&spec[mid..])],
+            |s| s.timestamp,
+        );
+        let trades = Chained::from_sources(
+            vec![trade_file(&spec[..mid]), trade_file(&spec[mid..])],
+            |t| t.timestamp,
+        );
+        MergedFeed::new(books, trades)
+    }
+
+    #[test]
+    fn chained_feed_conforms() {
+        check("ChainedFeed", chained);
+    }
+
+    /// A `Chained` book source from in-memory "day files" (each a list of
+    /// timestamps) — the chaining logic under test, no parquet involved.
+    fn book_days(days: &[&[i64]]) -> Chained<std::vec::IntoIter<Result<MarketState, LoadError>>, MarketState> {
+        let sources: Vec<_> = days
+            .iter()
+            .map(|d| {
+                d.iter()
+                    .map(|&ts| Ok(state(ts)))
+                    .collect::<Vec<Result<MarketState, LoadError>>>()
+                    .into_iter()
+            })
+            .collect();
+        Chained::from_sources(sources, |s| s.timestamp)
+    }
+
+    #[test]
+    fn chained_concatenates_files_in_order() {
+        let ts: Vec<i64> = book_days(&[&[1, 2], &[3, 4]])
+            .map(|r| r.unwrap().timestamp)
+            .collect();
+        assert_eq!(ts, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn chained_single_file_matches_direct() {
+        // A chain of one yields exactly the file's own items — the guarantee that
+        // every existing single-file run stays byte-identical.
+        let ts: Vec<i64> = book_days(&[&[10, 20, 30]])
+            .map(|r| r.unwrap().timestamp)
+            .collect();
+        assert_eq!(ts, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn chained_allows_equal_timestamps_across_the_seam() {
+        // Non-decreasing, matching each source's own within-file guard.
+        let ts: Vec<i64> = book_days(&[&[5], &[5]])
+            .map(|r| r.unwrap().timestamp)
+            .collect();
+        assert_eq!(ts, vec![5, 5]);
+    }
+
+    #[test]
+    fn chained_rejects_a_backwards_seam() {
+        // File 1 ends at 5, file 2 starts at 3 — the seam runs the clock backwards.
+        let mut chained = book_days(&[&[1, 5], &[3]]);
+        assert_eq!(chained.next().unwrap().unwrap().timestamp, 1);
+        assert_eq!(chained.next().unwrap().unwrap().timestamp, 5);
+        assert!(matches!(
+            chained.next(),
+            Some(Err(LoadError::OutOfOrder { previous: 5, got: 3 }))
+        ));
+    }
+
+    #[test]
+    fn chained_propagates_an_inner_file_error() {
+        let sources: Vec<std::vec::IntoIter<Result<MarketState, LoadError>>> = vec![
+            vec![Ok(state(1))].into_iter(),
+            vec![Err(LoadError::InvalidSize("x".to_string()))].into_iter(),
+        ];
+        let mut chained = Chained::from_sources(sources, |s| s.timestamp);
+        assert_eq!(chained.next().unwrap().unwrap().timestamp, 1);
+        assert!(matches!(
+            chained.next(),
+            Some(Err(LoadError::InvalidSize(_)))
+        ));
+    }
+
+    #[test]
+    fn chained_tape_omits_missing_days() {
+        // A day whose tape is missing contributes no source at all; the remaining
+        // days stay ordered — how `from_book_paths` handles a gap.
+        let d1: std::vec::IntoIter<Result<Trade, LoadError>> = vec![Ok(trade(10))].into_iter();
+        let d3: std::vec::IntoIter<Result<Trade, LoadError>> = vec![Ok(trade(30))].into_iter();
+        let ts: Vec<i64> = Chained::from_sources(vec![d1, d3], |t| t.timestamp)
+            .map(|r| r.unwrap().timestamp)
+            .collect();
+        assert_eq!(ts, vec![10, 30]);
+    }
 }
 
 #[cfg(test)]
@@ -745,7 +957,8 @@ mod tests {
     #[ignore = "reads the real data pair; run with `cargo test -- --ignored`"]
     fn side_convention_over_real_pair() {
         let path = "data/telonex/110136933550893624733134445460153301975615510734202337526927943993346922198810_2026-06-14_book_snapshot_full.parquet";
-        let mut feed = MergedFeed::from_book_path(path).unwrap();
+        let (mut feed, found) = MergedFeed::from_book_path_optional(path).unwrap();
+        assert!(found, "the sibling tape should be found");
 
         let (mut buy_total, mut buy_above) = (0u64, 0u64);
         let (mut sell_total, mut sell_below) = (0u64, 0u64);

@@ -14,7 +14,7 @@ sees resolutions (that would be lookahead) and never assumes an order filled (a
 request is intent, not execution). The world always arrives borrowed and
 read-only.
 
-## The examples
+## The examples, in increasing sophistication
 
 | file | name(s) | what it shows |
 |---|---|---|

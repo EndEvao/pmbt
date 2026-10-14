@@ -164,13 +164,16 @@ impl MarketEntry {
         }
     }
 
-    /// Locate the entry's `book_snapshot_full` parquet: the explicit `file`
-    /// override if given, else exactly one `{market_id}_*_book_snapshot_full
-    /// .parquet` under `data_dir` — zero or several matches is a loud error,
-    /// because guessing which day's file to backtest is not the tool's call.
-    pub fn data_file(&self, data_dir: &Path) -> Result<PathBuf, UniverseError> {
+    /// Locate the entry's `book_snapshot_full` parquet file(s), in chronological
+    /// order: the explicit `file` override (as a one-element list) if given, else
+    /// every `{market_id}_*_book_snapshot_full.parquet` under `data_dir`, sorted.
+    /// Filenames embed a zero-padded ISO date, so a lexicographic sort *is*
+    /// chronological — the order a chained feed must replay them in. Zero matches
+    /// is a loud error; several is the normal multi-day case (chained into one
+    /// continuous feed), not an error.
+    pub fn data_files(&self, data_dir: &Path) -> Result<Vec<PathBuf>, UniverseError> {
         if let Some(file) = &self.file {
-            return Ok(file.clone());
+            return Ok(vec![file.clone()]);
         }
         let mut matches: Vec<PathBuf> = std::fs::read_dir(data_dir)?
             .filter_map(Result::ok)
@@ -182,17 +185,11 @@ impl MarketEntry {
                 })
             })
             .collect();
-        match matches.len() {
-            0 => Err(UniverseError::DataFileNotFound(self.market_id.clone())),
-            1 => Ok(matches.remove(0)),
-            _ => {
-                matches.sort();
-                Err(UniverseError::AmbiguousDataFile {
-                    market_id: self.market_id.clone(),
-                    matches,
-                })
-            }
+        if matches.is_empty() {
+            return Err(UniverseError::DataFileNotFound(self.market_id.clone()));
         }
+        matches.sort(); // filename date is zero-padded ISO ⇒ lexicographic = chronological
+        Ok(matches)
     }
 }
 
@@ -211,11 +208,6 @@ pub enum UniverseError {
     EmptyUniverse,
     #[error("no book_snapshot_full parquet for market {0:?} in the data dir")]
     DataFileNotFound(String),
-    #[error("market {market_id:?} matches several data files (pass `file` to pick): {matches:?}")]
-    AmbiguousDataFile {
-        market_id: String,
-        matches: Vec<PathBuf>,
-    },
 }
 
 /// The universe-level rollup: exact sums over the per-market results. Cash
@@ -368,8 +360,8 @@ mod tests {
             Some(Price::new(0).unwrap())
         );
         assert_eq!(
-            u.markets[2].data_file(Path::new("ignored")).unwrap(),
-            PathBuf::from("custom/path.parquet")
+            u.markets[2].data_files(Path::new("ignored")).unwrap(),
+            vec![PathBuf::from("custom/path.parquet")]
         );
     }
 
@@ -487,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_needs_exactly_one_match() {
+    fn discovery_finds_all_days_in_chronological_order() {
         let dir = std::env::temp_dir().join(format!("pmbt_universe_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         // Discovery is pure name-matching: empty marker files suffice.
@@ -506,20 +498,27 @@ mod tests {
             file: None,
         };
 
+        // One day: a single-element list.
         assert_eq!(
-            entry("42").data_file(&dir).unwrap(),
-            dir.join("42_2026-06-13_book_snapshot_full.parquet")
+            entry("42").data_files(&dir).unwrap(),
+            vec![dir.join("42_2026-06-13_book_snapshot_full.parquet")]
         );
+        // No matching token: a loud error.
         assert!(matches!(
-            entry("999").data_file(&dir),
+            entry("999").data_files(&dir),
             Err(UniverseError::DataFileNotFound(id)) if id == "999"
         ));
 
+        // A second day is chained, not an error, and returned in chronological
+        // (lexicographic) order — the order a chained feed must replay.
         std::fs::write(dir.join("42_2026-06-14_book_snapshot_full.parquet"), b"").unwrap();
-        assert!(matches!(
-            entry("42").data_file(&dir),
-            Err(UniverseError::AmbiguousDataFile { matches, .. }) if matches.len() == 2
-        ));
+        assert_eq!(
+            entry("42").data_files(&dir).unwrap(),
+            vec![
+                dir.join("42_2026-06-13_book_snapshot_full.parquet"),
+                dir.join("42_2026-06-14_book_snapshot_full.parquet"),
+            ]
+        );
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -536,7 +535,7 @@ mod tests {
         let mut results = Vec::new();
         for entry in &universe.markets {
             let (feed, _) =
-                MergedFeed::from_book_path_optional(entry.data_file(&universe.data_dir).unwrap())
+                MergedFeed::from_book_paths(&entry.data_files(&universe.data_dir).unwrap())
                     .unwrap();
             let result = Engine::new(
                 10_000.0,
