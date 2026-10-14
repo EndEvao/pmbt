@@ -6,10 +6,10 @@ here is part of the engine.
 ## capture_ws.py — raw Polymarket websocket capture
 
 Records CLOB websocket frames in the exact envelope `pmbt convert` consumes
-(`{recv_t, recv_iso, raw}` JSONL). Improvements over a naive recorder, whose
-dropped frames leave unrecoverable book gaps: auto-reconnect with backoff (the
-book-on-subscribe snapshot doubles as the resync BookBuilder expects),
-keepalive PINGs, per-line flush, loud disconnect logging.
+(`{recv_t, recv_iso, raw}` JSONL, same as `data/england_croatia/`). Improvements
+over the recordings that produced our known gap problems: auto-reconnect with
+backoff (the book-on-subscribe snapshot doubles as the resync BookBuilder
+expects), keepalive PINGs, per-line flush, loud disconnect logging.
 
 ```bash
 pip install websockets

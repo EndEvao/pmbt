@@ -117,6 +117,14 @@ impl TelonexBookSource {
 /// a float parse is enough.
 fn decode_ladder(ladder: &ListArray, row: usize) -> Result<Box<[Level]>, LoadError> {
     let levels = ladder.value(row);
+    // An empty side is a valid (empty) ladder — MarketState allows empty sides.
+    // When EVERY row of a file has a given side empty (e.g. a book that has
+    // collapsed to one side by the settlement day), Arrow can't infer the inner
+    // struct type and types the whole column `list<null>`, so the struct cast
+    // below fails. Short-circuit the empty row before the cast.
+    if levels.is_empty() {
+        return Ok(Box::new([]));
+    }
     let levels = levels
         .as_struct_opt()
         .ok_or(LoadError::MissingColumn("bids/asks levels"))?;
@@ -175,9 +183,11 @@ impl Iterator for TelonexBookSource {
     }
 }
 
-/// The columns a trade row needs; the rest of the file (`local_timestamp_us`,
-/// `exchange`, `slug`, `trade_id`, …) is never decoded.
-const TRADE_COLUMNS: [&str; 5] = ["timestamp_us", "price", "size", "side", "origin_asset_id"];
+/// The columns every trade row needs; the rest of the file (`local_timestamp_us`,
+/// `exchange`, `slug`, `trade_id`, …) is never decoded. The origin token is a
+/// sixth, projected separately because Telonex names it inconsistently — see
+/// [`TelonexTradesSource::from_chunk_reader`].
+const TRADE_COLUMNS: [&str; 4] = ["timestamp_us", "price", "size", "side"];
 
 /// Streams a Telonex `trades` Parquet file as [`Trade`]s — the sibling of
 /// [`TelonexBookSource`], built the same way (project, stream batch-by-batch,
@@ -188,6 +198,9 @@ pub struct TelonexTradesSource {
     current: Option<RecordBatch>,
     row: usize,
     last_timestamp: i64,
+    /// Which projected column carries the trade origin: `origin_asset_id` when
+    /// the file has it, else `asset_id` (this file's own token) as the fallback.
+    origin_col: &'static str,
 }
 
 impl TelonexTradesSource {
@@ -205,11 +218,28 @@ impl TelonexTradesSource {
         let builder = ParquetRecordBatchReaderBuilder::try_new(reader)?;
 
         let schema = builder.parquet_schema();
+        let fields = schema.root_schema().get_fields();
+
+        // Telonex ships `origin_asset_id` (which token's book a print originated
+        // on) inconsistently — ~1/3 of real `trades` files omit it. When it's
+        // absent, this file's own `asset_id` IS the origin (one file = one
+        // token), so we project that instead. The field is unused in v1 (carried
+        // for future complement-aware attribution), and files that DO carry the
+        // column still read it — so their decode stays byte-identical.
+        let origin_col: &'static str = if fields.iter().any(|f| f.name() == "origin_asset_id") {
+            "origin_asset_id"
+        } else {
+            "asset_id"
+        };
+
         let indices = TRADE_COLUMNS
             .iter()
+            .copied()
+            .chain(std::iter::once(origin_col))
             .map(|name| {
-                (0..schema.root_schema().get_fields().len())
-                    .find(|&i| schema.root_schema().get_fields()[i].name() == *name)
+                fields
+                    .iter()
+                    .position(|f| f.name() == name)
                     .ok_or(LoadError::MissingColumn(name))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -220,11 +250,13 @@ impl TelonexTradesSource {
             current: None,
             row: 0,
             last_timestamp: i64::MIN,
+            origin_col,
         })
     }
 
-    /// Decode one row of a projected batch into a [`Trade`].
-    fn parse_row(batch: &RecordBatch, row: usize) -> Result<Trade, LoadError> {
+    /// Decode one row of a projected batch into a [`Trade`]. `origin_col` names
+    /// the projected origin column (`origin_asset_id` or the `asset_id` fallback).
+    fn parse_row(batch: &RecordBatch, row: usize, origin_col: &'static str) -> Result<Trade, LoadError> {
         let column = |name: &'static str| {
             batch
                 .column_by_name(name)
@@ -247,7 +279,7 @@ impl TelonexTradesSource {
             .parse()
             .map_err(|_| LoadError::InvalidSize(size_str.to_string()))?;
         let side = parse_side(string("side")?)?;
-        let origin = MarketId::new(string("origin_asset_id")?.to_string());
+        let origin = MarketId::new(string(origin_col)?.to_string());
 
         Ok(Trade::new(timestamp, price, size, side, origin))
     }
@@ -281,7 +313,7 @@ impl Iterator for TelonexTradesSource {
             let row = self.row;
             self.row += 1;
 
-            return Some(Self::parse_row(&batch, row).and_then(|trade| {
+            return Some(Self::parse_row(&batch, row, self.origin_col).and_then(|trade| {
                 if trade.timestamp < self.last_timestamp {
                     return Err(LoadError::OutOfOrder {
                         previous: self.last_timestamp,
@@ -411,6 +443,65 @@ mod tests {
         let state = src.next().unwrap().unwrap();
         assert!(state.bid().is_none());
         assert!(state.ask().is_some());
+    }
+
+    #[test]
+    fn side_typed_list_null_reads_as_empty_ladder() {
+        // When a side is empty in EVERY row, Arrow can't infer the inner struct
+        // and types the whole column `list<null>` (real settlement-day files do
+        // this — the book has collapsed to one side). That side must read as an
+        // empty ladder, not fail the struct cast. The other side still decodes.
+        use arrow_array::{ArrayRef, ListArray, NullArray};
+        use arrow_buffer::OffsetBuffer;
+
+        let bids = ListArray::new(
+            Arc::new(Field::new("item", DataType::Null, true)),
+            OffsetBuffer::new(vec![0i32, 0].into()), // one row, empty
+            Arc::new(NullArray::new(0)) as ArrayRef,
+            None,
+        );
+        let asks = ladder_array(&[&[("0.60", "5")]]);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp_us", DataType::Int64, false),
+            Field::new("asset_id", DataType::Utf8, false),
+            Field::new(
+                "bids",
+                DataType::List(Arc::new(Field::new("item", DataType::Null, true))),
+                true,
+            ),
+            Field::new(
+                "asks",
+                DataType::List(Arc::new(Field::new(
+                    "item",
+                    DataType::Struct(level_fields()),
+                    true,
+                ))),
+                true,
+            ),
+        ]));
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(Int64Array::from(vec![1_000])),
+                Arc::new(StringArray::from(vec!["token-0"])),
+                Arc::new(bids),
+                Arc::new(asks),
+            ],
+        )
+        .unwrap();
+        let mut buf = Vec::new();
+        let mut writer = ArrowWriter::try_new(&mut buf, schema, None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+
+        let mut src = TelonexBookSource::from_chunk_reader(Bytes::from(buf)).unwrap();
+        let state = src.next().unwrap().unwrap();
+        assert!(state.bid().is_none()); // the list<null> side
+        assert_eq!(
+            state.ask().unwrap().price,
+            Price::parse_decimal("0.60").unwrap()
+        );
     }
 
     #[test]
@@ -587,5 +678,78 @@ mod tests {
             TelonexTradesSource::from_chunk_reader(Bytes::from(buf)),
             Err(LoadError::MissingColumn(_))
         ));
+    }
+
+    /// Build an in-memory `trades` file from explicit fields, so a test can
+    /// choose exactly which of `asset_id` / `origin_asset_id` are present.
+    fn trades_bytes(schema: Arc<Schema>, columns: Vec<arrow_array::ArrayRef>) -> Bytes {
+        let batch = RecordBatch::try_new(schema.clone(), columns).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = ArrowWriter::try_new(&mut buf, schema, None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+        Bytes::from(buf)
+    }
+
+    #[test]
+    fn trades_without_origin_column_fall_back_to_asset_id() {
+        // Real Telonex omits `origin_asset_id` on ~1/3 of trades files; the
+        // file's own `asset_id` is then the correct origin (one file = one token).
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp_us", DataType::Int64, false),
+            Field::new("price", DataType::Utf8, false),
+            Field::new("size", DataType::Utf8, false),
+            Field::new("side", DataType::Utf8, false),
+            Field::new("asset_id", DataType::Utf8, false),
+        ]));
+        let bytes = trades_bytes(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(vec![1_000])),
+                Arc::new(StringArray::from(vec!["0.42"])),
+                Arc::new(StringArray::from(vec!["7"])),
+                Arc::new(StringArray::from(vec!["buy"])),
+                Arc::new(StringArray::from(vec!["token-99"])),
+            ],
+        );
+
+        let mut src = TelonexTradesSource::from_chunk_reader(bytes).unwrap();
+        let t = src.next().unwrap().unwrap();
+        assert_eq!(t.price, Price::parse_decimal("0.42").unwrap());
+        assert_eq!(t.origin_asset_id, MarketId::new("token-99".to_string()));
+        assert!(src.next().is_none());
+    }
+
+    #[test]
+    fn trades_prefer_origin_asset_id_over_asset_id() {
+        // When both columns exist (the regression corpus), origin comes from
+        // `origin_asset_id` — the complement-aware value — not `asset_id`, so a
+        // file that carries the column decodes exactly as before this fallback.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp_us", DataType::Int64, false),
+            Field::new("price", DataType::Utf8, false),
+            Field::new("size", DataType::Utf8, false),
+            Field::new("side", DataType::Utf8, false),
+            Field::new("asset_id", DataType::Utf8, false),
+            Field::new("origin_asset_id", DataType::Utf8, false),
+        ]));
+        let bytes = trades_bytes(
+            schema,
+            vec![
+                Arc::new(Int64Array::from(vec![1_000])),
+                Arc::new(StringArray::from(vec!["0.5"])),
+                Arc::new(StringArray::from(vec!["1"])),
+                Arc::new(StringArray::from(vec!["sell"])),
+                Arc::new(StringArray::from(vec!["file-token"])),
+                Arc::new(StringArray::from(vec!["complement-token"])),
+            ],
+        );
+
+        let mut src = TelonexTradesSource::from_chunk_reader(bytes).unwrap();
+        let t = src.next().unwrap().unwrap();
+        assert_eq!(
+            t.origin_asset_id,
+            MarketId::new("complement-token".to_string())
+        );
     }
 }
