@@ -1,0 +1,15 @@
+# Review remediation plan
+
+Each fix is a separate commit. Regression tests demonstrate the original failure and verify the corrected behavior. Changes to existing user work are limited to removing registrations for the absent momentum strategy; the explanatory strategy-module comment is retained.
+
+1. **Restore compilation.** Remove the missing momentum module/import/registry entries. Do not invent its trading logic. Acceptance: offline build and existing unit suite pass.
+2. **Preserve consumed liquidity.** Retain the depleted execution book through time and trade events; reset only on a new book snapshot. Keep the observed market book independent. Acceptance: ten displayed shares cannot fill twenty shares between snapshots; a new snapshot restores depth.
+3. **Keep partial limit orders funded.** Check taker cost plus fees plus the cash needed for any resting remainder before applying any fills. Reject the entire order if underfunded. Acceptance: a partially crossing GTC/GTD cannot leave negative free cash or later overdraw; sufficiently funded orders still fill/rest.
+4. **Schedule orders by execution deadline.** Insert pending orders in stable deadline order, retaining cancellation by order ID. Acceptance: a fast limit order is not blocked by a delayed market order; equal deadlines preserve submission order.
+5. **Deliver scheduled callbacks at data boundaries.** Service due wakeups even when their timestamp coincides with a book event; remove due requests before calling the strategy. Acceptance: coincident and later callbacks fire once, including under perception delay.
+6. **Validate production order construction.** Add checked constructors with explicit errors, keep existing constructors as always-checked convenience wrappers, and test invalid quantities/TIF in release mode. Acceptance: NaN/infinite/nonpositive quantities and resting market orders cannot reach execution in any build profile.
+7. **Record portfolio event timing.** Add a recorder hook for non-book events and record current portfolio/quotes using the carried market mark without fabricating depth updates. Acceptance: intrabook fills affect equity/exposure at execution time, including trailing trades after the last snapshot.
+8. **Bound recording memory.** Provide incremental disk recording with bounded buffers and explicit error propagation; wire the CLI to the streaming path for standalone Parquet exports. Preserve full-history JSON/HTML behavior and document its memory cost. Acceptance: multi-batch output reads back correctly, records empty tables, and fails on write errors without publishing a success summary.
+9. **Align documentation and checks.** Remove obsolete descriptions of snapshot-only timers and front-only matching; state actual memory guarantees, constructor validation, and known modeling limitations. Add automated debug/release checks so compilation and behavioral regressions are caught.
+
+Final verification: formatting, offline debug/release tests, Clippy, and available real-data replay tests. Record any fixture-dependent failures explicitly; do not turn missing data into a false pass.
