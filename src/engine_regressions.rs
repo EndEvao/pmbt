@@ -71,3 +71,71 @@ fn clock_tick_must_not_replenish_consumed_depth() {
     assert_eq!(r.open_position.unwrap().quantity(), 20.);
     assert_eq!(r.rejections, 1);
 }
+
+use crate::{domain::trade::Trade, resting::QueueModel};
+#[test]
+fn partially_crossing_limit_must_keep_remainder_funded_after_fees() {
+    let mut s = Script::default();
+    s.books.insert(
+        0,
+        vec![Action::Place(OrderRequest::limit(
+            id(),
+            OrderSide::Buy,
+            10.,
+            p(0.5),
+            TimeInForce::Gtc,
+        ))],
+    );
+    let mut sim = Simulation::zero();
+    sim.fee_rate = 0.05;
+    sim.queue = QueueModel::Front;
+    let trade = Trade {
+        origin_asset_id: id(),
+        timestamp: 1,
+        side: OrderSide::Sell,
+        price: p(0.5),
+        size: 6.,
+    };
+    let feed = MergedFeed::new(
+        vec![Ok(book(0, 4.)), Ok(book(2, 4.))].into_iter(),
+        vec![Ok(trade)].into_iter(),
+    );
+    let r = Engine::new(5., Box::new(SweepFillModel), sim)
+        .run(feed, &mut s, None)
+        .unwrap();
+    assert!(r.final_cash >= 0., "cash became {}", r.final_cash);
+}
+
+#[test]
+fn funded_partial_limit_still_fills_and_rests() {
+    for tif in [
+        TimeInForce::Gtc,
+        TimeInForce::Gtd {
+            expires_at: 180_000_000,
+        },
+    ] {
+        let mut s = Script::default();
+        s.books.insert(
+            0,
+            vec![Action::Place(OrderRequest::limit(
+                id(),
+                OrderSide::Buy,
+                10.,
+                p(0.5),
+                tif,
+            ))],
+        );
+        let mut sim = Simulation::zero();
+        sim.fee_rate = 0.05;
+        let feed = MergedFeed::new(
+            vec![Ok(book(0, 4.)), Ok(book(2, 4.))].into_iter(),
+            std::iter::empty(),
+        );
+        let r = Engine::new(5.05, Box::new(SweepFillModel), sim)
+            .run(feed, &mut s, None)
+            .unwrap();
+        assert_eq!(r.taker_fills, 1);
+        assert_eq!(r.resting_quantity, 6.);
+        assert!((r.final_cash - r.resting_reserved).abs() < 1e-12);
+    }
+}

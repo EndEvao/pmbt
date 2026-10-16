@@ -896,7 +896,7 @@ impl Engine {
                 tally.rejections += 1;
                 continue;
             }
-            if matched > 0.0 && !self.can_afford(&due.request, &prospective) {
+            if !self.can_afford(&due.request, &prospective) {
                 tally.rejections += 1;
                 continue;
             }
@@ -1112,7 +1112,16 @@ impl Engine {
                 // Against *free* cash: what resting buys already hold is
                 // spoken for. (This order's own hold is released first, so it
                 // never counts against itself.)
-                self.portfolio.cash() - self.reservations.reserved_cash() >= cost
+                let remaining =
+                    (request.quantity() - fills.iter().map(|f| f.quantity).sum::<f64>()).max(0.0);
+                let rest_cost = if request.tif().rests() {
+                    request
+                        .limit_price()
+                        .map_or(0.0, |p| p.as_f64() * remaining)
+                } else {
+                    0.0
+                };
+                self.portfolio.cash() - self.reservations.reserved_cash() >= cost + rest_cost
             }
             OrderSide::Sell => true,
         }
