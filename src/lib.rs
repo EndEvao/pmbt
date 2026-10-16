@@ -30,3 +30,6 @@ pub mod resting;
 pub mod strategy;
 pub mod telonex;
 pub mod universe;
+
+#[cfg(test)]
+mod engine_regressions;

@@ -268,6 +268,8 @@ impl Engine {
         // The last book the market showed. On a tick it is carried forward,
         // restamped, so `state.timestamp` is always "now".
         let mut last_book: Option<MarketState> = None;
+        // Execution depth survives clock/trade events until the next real book.
+        let mut depleted: Option<MarketState> = None;
         // Under perception, the last book the STRATEGY was shown — the delayed
         // one, not the newer one being withheld. Handing it the current book on
         // a tick would leak exactly what perception exists to prevent. Without
@@ -286,6 +288,7 @@ impl Engine {
                 Event::Book(state) => {
                     let now = state.timestamp;
                     last_book = Some(state);
+                    depleted = None;
                     (now, Step::Book)
                 }
                 Event::Trade(trade) => (trade.timestamp, Step::Trade(trade)),
@@ -338,7 +341,7 @@ impl Engine {
             // One residual per snapshot, shared by both drains below, so every
             // order executing at this instant walks the depth its predecessors
             // left rather than a fresh full book.
-            let mut book = ResidualBook::new(state);
+            let mut book = ResidualBook::with_depleted(state, depleted.take());
 
             // Orders from earlier snapshots whose time has come execute
             // BEFORE the strategy sees this snapshot (they were on the
@@ -406,6 +409,8 @@ impl Engine {
             // execute against their own triggering snapshot — the pre-latency
             // semantics, exactly. With a real delay this drain is a no-op.
             self.execute_due(&mut pending, &mut book, &mut tally, recorder);
+
+            depleted = book.into_depleted();
 
             // Sample the fully-settled instant: this snapshot's true book plus
             // the portfolio after every fill due at or before it. Last thing in

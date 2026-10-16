@@ -11,7 +11,7 @@ use crate::domain::marketstate::MarketState;
 /// residual is the fix: each execution deducts what it took, and the next one
 /// walks what is left.
 ///
-/// Scope is exactly one snapshot. See [`MarketState::consume`] for why this is
+/// Scope lasts until the next real book snapshot, including intervening ticks. See [`MarketState::consume`] for why this is
 /// self-consistency rather than market impact.
 pub struct ResidualBook<'a> {
     pristine: &'a MarketState,
@@ -26,6 +26,21 @@ impl<'a> ResidualBook<'a> {
             pristine,
             depleted: None,
         }
+    }
+
+    /// Restore prior consumption at the current event's timestamp.
+    pub fn with_depleted(pristine: &'a MarketState, depleted: Option<MarketState>) -> Self {
+        Self {
+            pristine,
+            depleted: depleted.map(|mut state| {
+                state.timestamp = pristine.timestamp;
+                state
+            }),
+        }
+    }
+
+    pub fn into_depleted(self) -> Option<MarketState> {
+        self.depleted
     }
 
     /// The untouched snapshot. Its timestamp is the clock — consuming depth
