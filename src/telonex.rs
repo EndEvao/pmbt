@@ -256,7 +256,11 @@ impl TelonexTradesSource {
 
     /// Decode one row of a projected batch into a [`Trade`]. `origin_col` names
     /// the projected origin column (`origin_asset_id` or the `asset_id` fallback).
-    fn parse_row(batch: &RecordBatch, row: usize, origin_col: &'static str) -> Result<Trade, LoadError> {
+    fn parse_row(
+        batch: &RecordBatch,
+        row: usize,
+        origin_col: &'static str,
+    ) -> Result<Trade, LoadError> {
         let column = |name: &'static str| {
             batch
                 .column_by_name(name)
@@ -313,16 +317,18 @@ impl Iterator for TelonexTradesSource {
             let row = self.row;
             self.row += 1;
 
-            return Some(Self::parse_row(&batch, row, self.origin_col).and_then(|trade| {
-                if trade.timestamp < self.last_timestamp {
-                    return Err(LoadError::OutOfOrder {
-                        previous: self.last_timestamp,
-                        got: trade.timestamp,
-                    });
-                }
-                self.last_timestamp = trade.timestamp;
-                Ok(trade)
-            }));
+            return Some(
+                Self::parse_row(&batch, row, self.origin_col).and_then(|trade| {
+                    if trade.timestamp < self.last_timestamp {
+                        return Err(LoadError::OutOfOrder {
+                            previous: self.last_timestamp,
+                            got: trade.timestamp,
+                        });
+                    }
+                    self.last_timestamp = trade.timestamp;
+                    Ok(trade)
+                }),
+            );
         }
     }
 }

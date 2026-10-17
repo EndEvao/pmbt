@@ -11,8 +11,8 @@
 //!
 //! | file | one row per |
 //! |---|---|
-//! | `samples.parquet` | book snapshot — price, cash, position, equity, PnL |
-//! | `fills.parquet` | execution — time, side, price, size, maker/taker |
+//! | `samples.parquet` | processed event — price, cash, position, equity, PnL |
+//! | `fills.parquet` | execution — time, side, price, size |
 //! | `blotter.parquet` | execution, with running position and realized P&L |
 //! | `depth.parquet` | book *level* — long format, not nested |
 //! | `summary.json` | the scalars: result, stats, trade stats |

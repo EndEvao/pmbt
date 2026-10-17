@@ -90,8 +90,7 @@ impl TimeInForce {
 /// timestamp, or status; the engine stamps those when it accepts the request
 /// and owns the resulting `Order`'s lifecycle.
 ///
-/// Fields are private so the two constructors are the only doors, which makes
-/// the illegal states unconstructable: a `market` (price-less) order can never
+/// Fields are private and all constructors validate in every build: a `market` (price-less) order can never
 /// carry a resting time-in-force, and a `limit` order's price is on-grid *by
 /// construction* — it takes a [`Price`], which has no off-grid constructor.
 ///

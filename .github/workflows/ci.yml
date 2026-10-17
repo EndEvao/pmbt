@@ -1,0 +1,22 @@
+name: Rust checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Formatting
+        run: cargo +stable fmt --check
+      - name: Lint
+        run: cargo +stable clippy --locked --all-targets -- -D warnings
+      - name: Debug tests
+        run: cargo +stable test --locked
+      - name: Release tests
+        run: cargo +stable test --locked --release
+      # Captured market data is not committed. Run ignored replay suites locally.

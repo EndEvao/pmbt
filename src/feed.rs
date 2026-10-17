@@ -1,14 +1,7 @@
-//! The merged book + trades feed.
-//!
-//! Pairs each book snapshot with the trades that printed since the previous
-//! snapshot (merge shape B), so a later resting-order matcher can advance
-//! against real executions without changing the engine's snapshot-driven loop
-//! shape. Both input streams are time-monotonic (each source guards its own
-//! order), so the merge is a single linear pass.
-//!
-//! This is the engine's feed: `Engine::run` takes `Snapshot`s, so a book-only
-//! replay is just a merge with an absent [`Tape`]. The trades are carried but
-//! not yet consumed — the resting-order matcher reads them next.
+//! The event-clock feed: merge independent book and trade streams in timestamp
+//! order and emit time events for engine deadlines between market events.
+//! Trades at the same instant as a book arrive first. Trailing trades remain
+//! observable after the final book; replay ends once both streams are exhausted.
 
 use std::collections::VecDeque;
 use std::iter::Peekable;
@@ -114,13 +107,9 @@ pub trait EventSource {
     fn next_event(&mut self, deadline: Option<i64>) -> Option<Result<Event, Self::Error>>;
 }
 
-/// Interleaves a book source and a trades source into one time-ordered stream of
-/// [`Snapshot`]s. Each snapshot carries every not-yet-emitted trade with
-/// `ts <= snapshot.ts` — i.e. the `(previous_ts, this_ts]` window. Leading
-/// trades attach to the first snapshot; **trailing** trades (after the last
-/// snapshot) are dropped, since there is no snapshot to carry them and
-/// settlement happens after the feed drains anyway. Any error from either input
-/// short-circuits the stream (fail-fast).
+/// Interleaves book and trade sources into atomic [`Event`]s. Errors from
+/// either source abort the run. Leading trades arrive before the first book
+/// (the engine ignores them until it has a book); trailing trades are emitted.
 pub struct MergedFeed<B, T>
 where
     B: Iterator<Item = Result<MarketState, LoadError>>,
@@ -690,7 +679,9 @@ mod conformance {
 
     /// A `Chained` book source from in-memory "day files" (each a list of
     /// timestamps) — the chaining logic under test, no parquet involved.
-    fn book_days(days: &[&[i64]]) -> Chained<std::vec::IntoIter<Result<MarketState, LoadError>>, MarketState> {
+    fn book_days(
+        days: &[&[i64]],
+    ) -> Chained<std::vec::IntoIter<Result<MarketState, LoadError>>, MarketState> {
         let sources: Vec<_> = days
             .iter()
             .map(|d| {
@@ -738,7 +729,10 @@ mod conformance {
         assert_eq!(chained.next().unwrap().unwrap().timestamp, 5);
         assert!(matches!(
             chained.next(),
-            Some(Err(LoadError::OutOfOrder { previous: 5, got: 3 }))
+            Some(Err(LoadError::OutOfOrder {
+                previous: 5,
+                got: 3
+            }))
         ));
     }
 

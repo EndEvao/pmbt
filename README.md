@@ -2,7 +2,7 @@
 
 `pmbt` replays a Polymarket market's **full order-book history** and plays the exchange back to your strategy, tick for tick. It is not a snapshot-loop that marks a curve to mid — it is a small matching engine that gates every order the way Polymarket would, charges the fees Polymarket would, makes orders wait out the latency they really face, and settles the position at resolution through a separate ledger. The point is a P&L you can trust: one where the friction is modelled rather than assumed away, and every optimistic assumption is named and turned into a knob you can move.
 
-It is written in Rust, streams its data in constant memory, and is heavily tested (192 unit tests over the accounting identities, gating, fills, the queue model, and settlement, plus slow suites that replay real captured data end to end). The historical backtester is complete; it is built, seam by seam, to grow into a live paper-trading engine on the same core (see [Roadmap](#roadmap)).
+It is written in Rust and streams its input data without retaining the full history. Tests cover accounting identities, order gates, execution timing, liquidity consumption, queue modeling, settlement, and reporting, with additional suites that replay captured data end to end. It is a research backtester with explicit modeling limitations, designed to support future live paper trading on the same core (see [Roadmap](#roadmap)).
 
 ```console
 $ cargo run -- run buyandhold data/telonex/<token>_<date>_book_snapshot_full.parquet \
@@ -60,7 +60,7 @@ Placement presets bundle feed + transit for an observer at a given location:
 | `retail-eu` | ~50 ms | a European home connection, no colocation |
 | `us-east` | ~135 ms | a US East Coast box, across the Atlantic each way |
 
-An order decided on the snapshot at `t` executes against the first book at or after `t + delay`, and executes against the book **as it really stood then** — never the stale one the strategy saw. A marketable order serves the full delay (feed + transit + taker hold); a resting limit order serves only feed + transit, because it *adds* liquidity rather than aggressing, so the exchange's taker brake does not apply to it. A cancel travels feed + transit too — which is why it can lose a race (see [Gate](#gate)).
+An order decided on the snapshot at `t` executes at `t + delay` against the latest exchange book available at that instant. The event clock does not wait for another snapshot. Pending orders are sorted by execution deadline, with submission order breaking ties. A marketable order serves the full delay (feed + transit + taker hold); a resting limit order serves only feed + transit, because it *adds* liquidity rather than aggressing, so the exchange's taker brake does not apply to it. A cancel travels feed + transit too — which is why it can lose a race (see [Gate](#gate)).
 
 **Perception delay** (optional) closes the other half of the loop: it delivers each snapshot to the strategy as late as a real observer would receive it (the feed component), so a signal over "the last 2 s of updates" can't secretly include updates the observer hadn't gotten yet. Execution latency applies either way — the exchange always trades on the true book. Every effect toggles per run or per universe.
 
@@ -81,7 +81,7 @@ The fill model is the swappable seam that decides *how* an order matches the boo
 - **`naive`** — fills the full requested size at the touch, no depth limit, no slippage. Deliberately unrealistic: the optimistic baseline every realistic model is measured against.
 - **`sweep`** — walks the ladder best-first, consuming liquidity level by level (buys up the asks, sells down the bids), emitting **one fill per level at that level's exact tick price** — the record matches what the exchange would report for a multi-level match. A limit order stops walking once the ladder crosses its price.
 
-Fill models are **portfolio-blind**: they model the exchange's matching, not the trader's wallet — affordability is the engine's job, checked against the actual walked cost. When several orders execute at one instant they share a single **residual book**, so the second order walks the depth the first one left rather than a fresh copy of the ladder; the next snapshot from the feed restores full depth (that is ground truth again). Resting maker orders are filled by a different path entirely — against the trades tape, see [Queue modelling](#queue-modelling).
+Fill models are **portfolio-blind**: they model the exchange's matching, not the trader's wallet — affordability is the engine's job, checked against the actual walked cost. Orders share a **residual book** until the next real book snapshot. Clock and trade events preserve consumed depth; only a new snapshot restores the displayed liquidity. The strategy still observes the historical market book, independently of this execution ledger. Resting maker orders are filled by a different path entirely — against the trades tape, see [Queue modelling](#queue-modelling).
 
 ### Order types (time-in-force)
 
@@ -94,19 +94,19 @@ Four time-in-force types — Polymarket's exact set, no more:
 | **FOK** (Fill-Or-Kill) | fill the whole size immediately as taker, or nothing |
 | **FAK** (Fill-And-Kill) | fill what's immediately available, drop the remainder |
 
-GTD carries the exchange's real rules: an order is retired **one minute before** its stated expiry (a security buffer), and a stated expiry must be at least **three minutes** out or the exchange rejects it outright. The shortest GTD life actually obtainable is therefore `180 − 60 = 120 s` — which makes GTD a stale-order guard for slower strategies, not a substitute for cancel/replace at quoting frequency. Illegal states are unconstructable: a marketable (price-less) order can only be FOK or FAK — one that asked to rest would be meaningless, and the type system forbids it.
+GTD carries the exchange's real rules: an order is retired **one minute before** its stated expiry (a security buffer), and a stated expiry must be at least **three minutes** out or the exchange rejects it outright. The shortest GTD life actually obtainable is therefore `180 − 60 = 120 s` — which makes GTD a stale-order guard for slower strategies, not a substitute for cancel/replace at quoting frequency. Order constructors enforce finite positive quantities and restrict marketable (price-less) orders to FOK or FAK in both debug and release builds. `try_market` and `try_limit` return validation errors; the convenience constructors panic on invalid strategy constants. These are runtime checks, not compile-time type restrictions.
 
 ### Limit order mechanics
 
 A limit order commits its resources **at placement**, before it even reaches the book: a buy holds cash at `limit × qty` (the worst it could ever pay), a sell holds the shares it promises. So a burst of orders can't collectively overdraw during the latency window — each is gated against what the previous ones already hold. Its price is on-grid *by construction* (it takes a `Price`, which has no off-grid constructor).
 
-When the order's latency window elapses, the fill model computes what crosses right now (bounded by the limit price), and the time-in-force decides the unmatched remainder: FOK kills the whole order, FAK drops the rest, GTC/GTD rest it as a maker order. Whatever rests joins the book, re-holds resources for the size still outstanding, and seeds its queue position from the displayed size at its price. A limit order that isn't marketable on arrival simply rests without trading.
+When the order's latency window elapses, the fill model computes what crosses right now (bounded by the limit price), and the time-in-force decides the unmatched remainder: FOK kills the whole order, FAK drops the rest, GTC/GTD rest it as a maker order. Before applying any fills, the engine checks the immediate cost plus fees plus the cash needed for the resting remainder. An underfunded order is rejected as a whole. Whatever rests joins the book, re-holds resources for the size still outstanding, and seeds its queue position from the displayed size at its price. A limit order that isn't marketable on arrival simply rests without trading.
 
 > Not yet enforced: Polymarket's per-market `minimum_order_size` and per-market tick (0.01–0.0001). Both are exchange config not yet plumbed in, so the only size floor is `quantity > 0` and the price grid is the finer 6-decimal micro-tick grid.
 
 ### Data / IO
 
-The engine reads **Telonex-format Parquet**: `book_snapshot_full` (every book change, all levels, exchange time in microseconds) paired with its sibling `_trades` tape. One file is one token's complete market history, streamed in constant memory. A `MergedFeed` interleaves the book and trades streams into one time-ordered event stream of `Book` / `Trade` / `Time` events.
+The engine reads **Telonex-format Parquet**: `book_snapshot_full` (every book change, all levels, exchange time in microseconds) paired with its sibling `_trades` tape. Each file covers one token and day; consecutive day-files can be chained without loading their full history. A `MergedFeed` interleaves the book and trades streams into one time-ordered event stream of `Book` / `Trade` / `Time` events.
 
 The feed is an `EventSource` trait held to an **executable conformance suite** — five rules every source (including the future live one) must pass, because prose alone once let two implementations disagree and one ticked a replay into 2037. A missing trades tape degrades gracefully (the book replays fine; only resting orders need trades to fill), but a *malformed* one still fails loudly. Fail-fast throughout: the first bad row, out-of-order timestamp, or off-grid price aborts the run, because a P&L over silently-skipped data isn't a result.
 
@@ -115,6 +115,14 @@ Getting data in and out:
 - **`pmbt convert`** turns a raw CLOB websocket capture into Telonex-parity Parquet — book **and** trades — via a transport-free `clob` module (typed wire decode + delta-folding book builder). Dropped timeframes are handled honestly: every `price_change` is checked against the exchange's own inline best-bid/best-ask, and a disagreeing book is quarantined until the next full-book resync. Gap statistics are reported loudly.
 - **`--report`** writes a self-contained HTML page; **`--record`** dumps the full time series as JSON; **`--record-dir`** writes it as Parquet tables for pandas (`scripts/load_run.py`), ~50× smaller than the JSON.
 
+### Recording memory and failures
+
+A standalone `--record-dir` uses incremental Parquet writes with bounded row buffers (4,096 buffered records, plus a depth frame), retaining scalar statistics and currently resting order IDs. It rereads timestamp/equity columns at completion to compute the same adaptive-grid statistics as buffered reports. Parquet footer metadata still grows with the number of row groups; this is reduced-memory recording, not a strict constant-memory guarantee for arbitrarily long files.
+
+The output directory must be absent or empty. All five tables are created even for an empty run. A successful `summary.json` is published only after the tables close; an interrupted or failed export can leave partial tables without a summary. Recorder errors abort execution through `RunError::Recorder`; feed errors are returned as `RunError::Feed`.
+
+`--record` JSON, HTML reports, and exports requested alongside either retain the full history in memory. Use standalone `--record-dir` for large runs. Portfolio samples include trade and timer events at their actual timestamps; depth frames represent only real book updates.
+
 ### Gate
 
 Every order faces the gates Polymarket would apply, in the exchange's own two-phase order:
@@ -122,7 +130,7 @@ Every order faces the gates Polymarket would apply, in the exchange's own two-ph
 1. **At submission** — a cheap sanity check (the required side exists; a GTD's horizon clears the three-minute floor).
 2. **At execution** — the authoritative pass, against the snapshot the order actually lands on: no shorting (sells are covered against *free* inventory — shares already promised to a resting sell can't be sold twice); then the fill model runs; then funding is verified against the **actual walked cost plus fee**, not the touch price — a sweep costs more than `touch × qty`, so affordability can only be judged after the walk.
 
-Cancels are messages in flight: they land only *after* the current snapshot's trades have had their chance, so a maker can be picked off before a cancel arrives. A cancel that finds nothing has lost the race — counted separately (`picked off`) rather than silently dropped, because that is exactly the adverse selection worth measuring. The portfolio ledger itself **never rejects** — gating is the engine's responsibility, keeping the ledger a pure accounting layer.
+Cancels are messages in flight: they land on their scheduled event-clock deadline, with a trade at exactly the same timestamp processed first, so a maker can be picked off before a cancel arrives. A cancel that finds nothing has lost the race — counted separately (`picked off`) rather than silently dropped, because that is exactly the adverse selection worth measuring. The portfolio ledger itself **never rejects** — gating is the engine's responsibility, keeping the ledger a pure accounting layer.
 
 ### PnL calculations + results
 
@@ -197,7 +205,7 @@ Two commands run *many* engines and reduce them for you:
 The honest caveats, stated rather than buried:
 
 - **Front-of-queue optimism** is the biggest one, which is exactly why the [queue model](#queue-modelling) exists — treat `front` fills as an upper bound and read maker P&L as a range across the three modes.
-- **GTD expiry and cancels are swept on snapshot boundaries.** The engine has no clock *between* data events for these, so an order can outlive its expiry until data next arrives. The error is one-directional (orders always live longer, never shorter) and shrinks exactly where it matters (an active book is a dense one), but on a quiet book the tail is long — worth knowing before trusting a GTD-heavy strategy on a sparse market.
+- **Timers run between snapshots.** GTD expiry, cancel arrival, and strategy callbacks use the event clock. For equal timestamps, the current tie policy processes a trade before expiry/cancellation. A historical run stops when both data streams are exhausted; it does not manufacture later time.
 - **A limit order that crosses on arrival** strictly should serve the taker hold on the crossing portion; modelling that would split one order across two arrival times, so a small understatement is accepted and noted.
 - **Latency is constant per run** — no jitter distribution yet, though the per-component structure is there to attach one.
 - **Fees and taker delays are modelled as config, not looked up**, because the exact historical per-day value is unrecoverable from the exchange.
@@ -230,7 +238,9 @@ cargo run -- run quoter <book.parquet> --record-dir runs/quoter/
 # convert a raw websocket capture into per-asset Telonex-parity parquet (book + trades)
 cargo run -- convert <capture.jsonl> <out_dir>
 
-cargo test                   # unit suite (192 tests)
+cargo test                   # unit and regression suites
+cargo test --release         # also verifies release-build validation
+cargo clippy --all-targets -- -D warnings
 cargo test -- --ignored      # slow replays over the real data files
 ```
 
@@ -242,7 +252,7 @@ Example strategies live in [`strategies/`](strategies/) — `buyandhold`, `buyan
 
 **Next, in rough order:**
 
-1. **Live paper trading** — a websocket source over the existing `clob` core (the engine is already generic over the source and its error type, so this needs no engine change), a streaming recorder that doesn't accumulate in memory, and a report shape for a run that never drains.
+1. **Live paper trading** — a websocket source over the existing `clob` core (the engine is already generic over the source and its error type, so this needs no engine change), a recorder lifecycle for continuous output rotation, and a report shape for a run that never drains.
 2. **Alternative-data feeds** — signals (scores, prices, sentiment) merged into the same timestamp-ordered event stream, so a strategy can react to non-market data without lookahead.
 
 

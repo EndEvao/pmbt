@@ -24,7 +24,7 @@ import pandas as pd
 class Run:
     """One backtest, as tables plus its scalar summary."""
 
-    #: One row per book snapshot: bid/ask/mid, cash, qty, avg_cost, equity, pnl.
+    #: One row per book/trade/timer event: bid/ask/mid, cash, qty, avg_cost, equity, pnl.
     samples: pd.DataFrame
     #: One row per execution: side, price, qty.
     fills: pd.DataFrame

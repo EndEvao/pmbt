@@ -5,12 +5,10 @@
 //! `feed` and `transit` are properties of *our* placement relative to the
 //! exchange (Polymarket's CLOB runs in AWS eu-west-2, London); `taker_delay`
 //! is the exchange's deliberate per-market-type hold (see
-//! [`taker_delay`]). The engine v1 consumes only their sum — an order decided
-//! on the snapshot at `t` executes against the first snapshot at or after
-//! `t + execution_delay` — but per-component structure is what future
-//! refinements attach to: jitter distributions (per component, seeded),
-//! perception delay (`feed` alone), cancellation windows (`taker_delay`
-//! alone).
+//! [`taker_delay`]). Market orders use feed + transit + taker delay; limits and
+//! cancels use feed + transit. Perception optionally delays book delivery.
+//! The event clock executes deadlines against the latest available book,
+//! including on otherwise quiet intervals. Components are constant per run.
 //!
 //! Constant delays for now. Preset numbers are estimates from research
 //! (AWS inter-region latency tables; Telonex's own capture infrastructure

@@ -1,20 +1,8 @@
-//! Our own resting (maker) orders, and the **optimistic** matcher that fills
-//! them against the trade tape.
-//!
-//! # The optimism, stated plainly
-//!
-//! A real fill depends on **queue position** — how much size rests ahead of you
-//! at your price — and the book never reveals it: it shows aggregate depth, not
-//! individual orders. This model assumes we are always at the **front of the
-//! queue**, so any aggressing flow that reaches our price fills us immediately.
-//!
-//! That is deliberately generous. Measured on the game-day data, the touch held
-//! ~8x more depth than the whole day's consuming volume, so a realistically
-//! queued order would mostly *never* fill, while this model fills it at once.
-//! Treat maker fill rates from this matcher as an **upper bound**. The faithful
-//! version tracks `queue_ahead` (the size resting at our level when we joined)
-//! and consumes it with trade volume before we fill; the seam for that is
-//! [`RestingOrder`], which is why the type carries `placed_at`.
+//! Resting orders matched against the trade tape with configurable queue
+//! assumptions. `Front` is an optimistic upper bound; `Proportional` starts
+//! behind displayed depth and attributes unexplained shrinkage proportionally
+//! to cancels; `TradesOnly` advances only on observed trades. L2 data cannot
+//! identify individual queue positions, so results remain model-dependent.
 //!
 //! # The matching rule
 //!
@@ -225,18 +213,8 @@ impl OpenOrders {
     /// placement — unlike a cancel, nothing is in flight and nothing can lose a
     /// race.
     ///
-    /// **The engine has no clock between snapshots**, so this is swept on
-    /// snapshot boundaries and an order outlives its expiry until data next
-    /// arrives. Do not read that as negligible: the dev data's median interval
-    /// is 4 ms, but the tail is what governs the overshoot, and on a quiet book
-    /// it is long — the 2026-06-12 replay has a p99 of 18 s and a worst gap of
-    /// 98 s, which is 81% of the 120 s minimum life a GTD order can have. Nearly
-    /// 23 of that day's 24 hours sit inside gaps over a second.
-    ///
-    /// The error is one-directional (orders always live *longer*, never
-    /// shorter) and it shrinks exactly where it matters — an active book is a
-    /// dense one. Removing it needs a real event clock driving time
-    /// independently of data arrival, which is a larger change than this.
+    /// The engine schedules the earliest expiry independently of book updates.
+    /// At an equal timestamp, its current tie policy processes the trade first.
     pub fn expire(&mut self, now: i64) -> Vec<RestingOrder> {
         let mut gone = Vec::new();
         self.orders.retain(|order| {

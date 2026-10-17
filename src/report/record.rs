@@ -4,7 +4,7 @@
 //! the price path, the mark-to-market equity curve, the resting book over time,
 //! the discrete fills — lives *inside* the run loop and is otherwise discarded.
 //! A `Recorder` is how it gets out without the engine growing a dependency on
-//! how the data is later plotted: the engine calls two methods, both handed
+//! how the data is later plotted: the engine calls observation hooks, all handed
 //! borrowed, read-only state, and the recorder decides what to keep.
 //!
 //! The default methods are no-ops, so [`NullRecorder`] — what a plain `run`
@@ -20,7 +20,7 @@ use crate::domain::order::OrderSide;
 use crate::portfolio::Portfolio;
 
 /// A read-only observer of a backtest. The engine calls it; it never influences
-/// the run — every argument arrives borrowed and immutable. Both methods
+/// the run — every argument arrives borrowed and immutable. Observation hooks
 /// default to no-ops so a non-recording run pays nothing and stays identical.
 pub trait Recorder {
     /// One book snapshot has been fully processed: any orders due at this
@@ -178,7 +178,7 @@ impl Default for RecorderConfig {
 }
 
 /// The working recorder: accumulates the full price/equity series (one
-/// [`Sample`] per snapshot), every [`FillEvent`] exactly, and time-thinned
+/// [`Sample`] per book, trade, or timer event), every [`FillEvent`] exactly, and time-thinned
 /// [`DepthFrame`]s. Marking is continuous: when a snapshot has no mid (a
 /// one-sided book), equity is marked against the last price seen, so the curve
 /// never gaps or teleports to zero while a position is held.

@@ -347,9 +347,8 @@ impl Engine {
             // which is precisely the risk being modelled.
             self.drain_cancels(state.timestamp, &mut pending, &mut tally, recorder);
 
-            // One residual per snapshot, shared by both drains below, so every
-            // order executing at this instant walks the depth its predecessors
-            // left rather than a fresh full book.
+            // Carry prior consumption across events; only a new book resets
+            // it. Both execution drains share the same remaining depth.
             let mut book = ResidualBook::with_depleted(state, depleted.take());
 
             // Orders from earlier snapshots whose time has come execute
@@ -621,11 +620,8 @@ impl Engine {
     /// held. The exchange does this on its own schedule — no message travels,
     /// so unlike a cancel it cannot lose a race to a trade.
     ///
-    /// Swept right after the trades, for the same reason cancels are: prints in
-    /// this snapshot's window are executions the exchange already made, and an
-    /// order the exchange filled cannot then expire unfilled. See
-    /// [`OpenOrders::expire`] for the timing approximation, which is small on an
-    /// active book and emphatically not on a sparse one.
+    /// Scheduled on the event clock even between book updates. At an equal
+    /// timestamp, the current tie policy processes the trade before expiry.
     fn expire_gtd(&mut self, now: i64, tally: &mut Tally, recorder: &mut dyn Recorder) {
         for order in self.resting.expire(now) {
             if order.reserved > 0.0 {
@@ -656,19 +652,8 @@ impl Engine {
     /// the adverse selection a maker suffers — so it is counted separately in
     /// `missed` rather than silently dropped.
     ///
-    /// Approximation, stated: a cancel takes effect at the *end* of the snapshot
-    /// in which it becomes due, so it loses to every trade in that snapshot's
-    /// window — even to prints that arrived after it technically landed. It
-    /// biases toward *more* adverse selection, the safe direction for a
-    /// backtest. Exact interleaving would need trades and cancel-landings
-    /// merged by timestamp within the window.
-    ///
-    /// The error is one snapshot interval, which is 4 ms at the median on the
-    /// dev data (against a 13 ms dublin cancel) but has a long tail on a quiet
-    /// book — see [`OpenOrders::expire`], which measures it. That tail matters
-    /// less here than for expiries: a snapshot gap means no book updates, and a
-    /// cancel that arrives late into a market where nothing printed had nothing
-    /// to be picked off by.
+    /// The event clock schedules arrival independently of book updates. A trade
+    /// at exactly the same timestamp wins the race under the current tie policy.
     fn drain_cancels(
         &mut self,
         now: i64,
@@ -694,10 +679,7 @@ impl Engine {
     /// cancelling an order that has since filled or expired is a normal race
     /// (the strategy acted on the previous tick's view), not an error.
     ///
-    /// Cancels take effect **immediately**. Real cancels travel to the exchange
-    /// and can lose the race against an incoming fill — the adverse-selection
-    /// case worth modelling once cancellation windows land; until then a
-    /// strategy here can always pull a quote in time, which flatters it.
+    /// Called once the cancellation's transit deadline has arrived.
     fn cancel(
         &mut self,
         id: OrderId,
@@ -984,10 +966,8 @@ impl Engine {
         }
     }
 
-    /// Fill resting (maker) orders against the trades that printed since the
-    /// previous snapshot: a trade reaching a resting order's price is what
-    /// fills it. See [`crate::resting`] for the matching rule and, importantly,
-    /// the front-of-queue optimism it assumes.
+    /// Fill resting maker orders against timestamped trades, using the selected
+    /// queue model. See [`crate::resting`] for the matching assumptions.
     ///
     /// Maker fills pay **no fee** — Polymarket charges takers only.
     fn advance_resting(
