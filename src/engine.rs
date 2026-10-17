@@ -201,6 +201,14 @@ pub struct BacktestResult {
     pub resting_reserved: f64,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum RunError<E: std::error::Error + 'static> {
+    #[error("feed: {0}")]
+    Feed(#[source] E),
+    #[error("recorder: {0}")]
+    Recorder(#[source] std::io::Error),
+}
+
 impl Engine {
     pub fn new(initial_capital: f64, fill_model: Box<dyn FillModel>, sim: Simulation) -> Self {
         Self {
@@ -231,7 +239,7 @@ impl Engine {
         feed: S,
         strategy: &mut dyn Strategy,
         resolution: Option<Price>,
-    ) -> Result<BacktestResult, S::Error> {
+    ) -> Result<BacktestResult, RunError<S::Error>> {
         // A plain run is a recorded run with a recorder that keeps nothing —
         // the no-op default methods inline away, so this is byte-identical to
         // the pre-recorder engine. Callers that want the time series call
@@ -249,7 +257,7 @@ impl Engine {
         strategy: &mut dyn Strategy,
         resolution: Option<Price>,
         recorder: &mut dyn Recorder,
-    ) -> Result<BacktestResult, S::Error> {
+    ) -> Result<BacktestResult, RunError<S::Error>> {
         let mut tally = Tally::default();
         let feed_us = self.sim.latency.feed.as_micros() as i64;
         // Orders waiting out their latency window. Validation runs twice,
@@ -276,6 +284,7 @@ impl Engine {
         // perception the two are the same book, so `last_book` is used directly
         // and nothing is cloned.
         let mut last_seen: Option<MarketState> = None;
+        recorder.check().map_err(RunError::Recorder)?;
         loop {
             let deadline = self.next_deadline(&pending, &unseen, feed_us, last_ts);
             let Some(event) = feed.next_event(deadline) else {
@@ -284,7 +293,7 @@ impl Engine {
             // Fold the event into "now" plus what it carries. A book replaces
             // the market's last word; a trade and a time event both leave it
             // standing, restamped, so `state.timestamp` is always now.
-            let (now, step) = match event? {
+            let (now, step) = match event.map_err(RunError::Feed)? {
                 Event::Book(state) => {
                     let now = state.timestamp;
                     last_book = Some(state);
@@ -424,6 +433,7 @@ impl Engine {
             } else {
                 recorder.on_snapshot(state, &self.portfolio, quotes);
             }
+            recorder.check().map_err(RunError::Recorder)?;
         }
 
         // Orders still in flight when the data ends are killed, not judged —
@@ -434,6 +444,7 @@ impl Engine {
         let resting_quantity = self.resting.total_remaining();
         let resting_reserved = self.resting.total_reserved();
         let expired_resting = self.expire_resting(last_ts, recorder);
+        recorder.check().map_err(RunError::Recorder)?;
 
         let (settlement, open_position) = self.settle(resolution);
         let settlement_pnl = match &settlement {
@@ -994,6 +1005,9 @@ impl Engine {
         for maker in self.resting.fill_from(trades) {
             tally.realized_pnl += self.portfolio.apply(&maker.market_id, &maker.fill);
             recorder.on_fill(maker.fill.timestamp, maker.fill.side, &maker.fill);
+            if maker.complete {
+                recorder.on_order_filled(maker.order_id.value());
+            }
             // Release the hold this fill consumed; the cash actually spent moved
             // in `apply`.
             if maker.released > 0.0 {

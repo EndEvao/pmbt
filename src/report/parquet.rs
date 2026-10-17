@@ -65,12 +65,40 @@ pub fn write_run(dir: &Path, result: &BacktestResult, recorder: &TimeSeriesRecor
     std::fs::create_dir_all(dir)?;
     let samples = recorder.samples();
     let fills = recorder.fills();
+    let events = recorder.orders();
+    let (rows, trade_stats) = blotter::compute(fills);
+    emit_tables(recorder, &rows, |name, columns| {
+        write_table(dir, name, columns)
+    })?;
+
+    // --- summary: the scalars, small enough to stay readable ---------------
+    let grid = series::choose_grid(samples);
+    let document = serde_json::json!({
+        "summary": Summary::from(result),
+        "stats": stats::compute(samples, fills, result, grid),
+        "trade_stats": trade_stats,
+        "order_stats": super::orders::compute(events, result.fills),
+    });
+    serde_json::to_writer_pretty(
+        std::io::BufWriter::new(std::fs::File::create(dir.join("summary.json"))?),
+        &document,
+    )?;
+
+    Ok(())
+}
+
+pub(crate) fn emit_tables(
+    recorder: &TimeSeriesRecorder,
+    rows: &[blotter::BlotterRow],
+    mut emit: impl FnMut(&str, Vec<(&str, ArrayRef)>) -> Result<()>,
+) -> Result<()> {
+    let samples = recorder.samples();
+    let fills = recorder.fills();
 
     // --- samples: one row per snapshot -------------------------------------
     let f64s = |values: Vec<f64>| Arc::new(Float64Array::from(values)) as ArrayRef;
     let opts = |values: Vec<Option<f64>>| Arc::new(Float64Array::from(values)) as ArrayRef;
-    write_table(
-        dir,
+    emit(
         "samples",
         vec![
             (
@@ -103,8 +131,7 @@ pub fn write_run(dir: &Path, result: &BacktestResult, recorder: &TimeSeriesRecor
     )?;
 
     // --- fills: one row per execution --------------------------------------
-    write_table(
-        dir,
+    emit(
         "fills",
         vec![
             (
@@ -125,9 +152,7 @@ pub fn write_run(dir: &Path, result: &BacktestResult, recorder: &TimeSeriesRecor
     )?;
 
     // --- blotter: executions folded through the engine's own accounting ----
-    let (rows, trade_stats) = blotter::compute(fills);
-    write_table(
-        dir,
+    emit(
         "blotter",
         vec![
             (
@@ -166,8 +191,7 @@ pub fn write_run(dir: &Path, result: &BacktestResult, recorder: &TimeSeriesRecor
             }
         }
     }
-    write_table(
-        dir,
+    emit(
         "depth",
         vec![
             ("ts", Arc::new(Int64Array::from(ts)) as ArrayRef),
@@ -180,8 +204,7 @@ pub fn write_run(dir: &Path, result: &BacktestResult, recorder: &TimeSeriesRecor
 
     // --- orders: the lifecycle, one row per event --------------------------
     let events = recorder.orders();
-    write_table(
-        dir,
+    emit(
         "orders",
         vec![
             (
@@ -222,19 +245,6 @@ pub fn write_run(dir: &Path, result: &BacktestResult, recorder: &TimeSeriesRecor
                 f64s(events.iter().map(|e| e.quantity).collect()),
             ),
         ],
-    )?;
-
-    // --- summary: the scalars, small enough to stay readable ---------------
-    let grid = series::choose_grid(samples);
-    let document = serde_json::json!({
-        "summary": Summary::from(result),
-        "stats": stats::compute(samples, fills, result, grid),
-        "trade_stats": trade_stats,
-        "order_stats": super::orders::compute(events, result.fills),
-    });
-    serde_json::to_writer_pretty(
-        std::io::BufWriter::new(std::fs::File::create(dir.join("summary.json"))?),
-        &document,
     )?;
 
     Ok(())

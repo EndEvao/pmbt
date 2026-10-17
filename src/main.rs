@@ -241,7 +241,17 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
 
     // Record the full time series only when an output (JSON and/or HTML) was
     // asked for — a plain run stays on the no-op path and pays nothing.
-    let result = if record_path.is_some() || report_path.is_some() || record_dir.is_some() {
+    let result = if let Some(out) = record_dir
+        .as_ref()
+        .filter(|_| record_path.is_none() && report_path.is_none())
+    {
+        let mut recorder =
+            report::stream::ParquetRecorder::new(Path::new(out), RecorderConfig::default())?;
+        let result = engine.run_recorded(feed, strategy.as_mut(), resolution, &mut recorder)?;
+        let samples = recorder.finish(&result)?;
+        println!("streamed {samples} samples + fills/blotter/depth/orders parquet to {out}/");
+        result
+    } else if record_path.is_some() || report_path.is_some() || record_dir.is_some() {
         let mut recorder = TimeSeriesRecorder::new(RecorderConfig::default());
         let result = engine.run_recorded(feed, strategy.as_mut(), resolution, &mut recorder)?;
         if let Some(out) = &record_path {

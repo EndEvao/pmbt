@@ -46,86 +46,77 @@ pub struct TradeStats {
     pub avg_hold_us: f64,
 }
 
-/// Build the blotter rows and the round-trip summary from the recorded fills.
-pub fn compute(fills: &[FillEvent]) -> (Vec<BlotterRow>, TradeStats) {
-    let mut position = Position::new();
-    // Quantity-weighted acquisition time of the shares currently held, so a sell
-    // can attribute a holding period back to when the inventory was bought.
-    let mut acq_time = 0.0;
-    let mut rows = Vec::with_capacity(fills.len());
-
-    let mut sells = 0usize;
-    let mut wins: Vec<f64> = Vec::new();
-    let mut losses: Vec<f64> = Vec::new();
-    let mut hold_num = 0.0; // Σ hold_us · closed_qty
-    let mut hold_den = 0.0; // Σ closed_qty
-
-    for fe in fills {
-        let side = match fe.side {
-            "sell" => OrderSide::Sell,
-            _ => OrderSide::Buy,
+/// Incremental accounting; memory is independent of the number of fills.
+#[derive(Default)]
+pub(crate) struct Accumulator {
+    position: Position,
+    acq_time: f64,
+    sells: usize,
+    wins: usize,
+    losses: usize,
+    win_sum: f64,
+    loss_sum: f64,
+    hold_num: f64,
+    hold_den: f64,
+}
+impl Accumulator {
+    pub fn push(&mut self, fe: &FillEvent) -> BlotterRow {
+        let side = if fe.side == "sell" {
+            OrderSide::Sell
+        } else {
+            OrderSide::Buy
         };
-        let price = Price::from_probability(fe.price).expect("recorded fill price is on-grid");
-        let fill = Fill::new(side, price, fe.qty, fe.ts);
-        let held = position.quantity();
-
-        let realized = match side {
-            OrderSide::Buy => {
-                // Re-average the acquisition time alongside the cost basis.
-                let new_qty = held + fe.qty;
-                if new_qty > 0.0 {
-                    acq_time = (held * acq_time + fe.qty * fe.ts as f64) / new_qty;
-                }
-                position.apply(&fill)
+        let fill = Fill::new(
+            side,
+            Price::from_probability(fe.price).expect("recorded price"),
+            fe.qty,
+            fe.ts,
+        );
+        let held = self.position.quantity();
+        if side == OrderSide::Buy {
+            self.acq_time = (held * self.acq_time + fe.qty * fe.ts as f64) / (held + fe.qty);
+        }
+        let realized = self.position.apply(&fill);
+        if side == OrderSide::Sell {
+            self.sells += 1;
+            let closed = fe.qty.min(held);
+            self.hold_num += (fe.ts as f64 - self.acq_time) * closed;
+            self.hold_den += closed;
+            if realized > 0.0 {
+                self.wins += 1;
+                self.win_sum += realized;
             }
-            OrderSide::Sell => {
-                let r = position.apply(&fill);
-                sells += 1;
-                let closed = fe.qty.min(held);
-                hold_num += (fe.ts as f64 - acq_time) * closed;
-                hold_den += closed;
-                if r > 0.0 {
-                    wins.push(r);
-                } else if r < 0.0 {
-                    losses.push(r);
-                }
-                r
+            if realized < 0.0 {
+                self.losses += 1;
+                self.loss_sum += realized;
             }
-        };
-
-        rows.push(BlotterRow {
+        }
+        BlotterRow {
             ts: fe.ts,
             side: fe.side,
             price: fe.price,
             qty: fe.qty,
-            position_after: position.quantity(),
+            position_after: self.position.quantity(),
             realized,
-        });
-    }
-
-    let mean = |xs: &[f64]| {
-        if xs.is_empty() {
-            0.0
-        } else {
-            xs.iter().sum::<f64>() / xs.len() as f64
         }
-    };
-    let stats = TradeStats {
-        round_trips: sells,
-        win_rate: if sells > 0 {
-            wins.len() as f64 / sells as f64
-        } else {
-            0.0
-        },
-        avg_win: mean(&wins),
-        avg_loss: mean(&losses),
-        avg_hold_us: if hold_den > 0.0 {
-            hold_num / hold_den
-        } else {
-            0.0
-        },
-    };
-    (rows, stats)
+    }
+    pub fn stats(&self) -> TradeStats {
+        let ratio = |sum: f64, n: f64| if n > 0.0 { sum / n } else { 0.0 };
+        TradeStats {
+            round_trips: self.sells,
+            win_rate: ratio(self.wins as f64, self.sells as f64),
+            avg_win: ratio(self.win_sum, self.wins as f64),
+            avg_loss: ratio(self.loss_sum, self.losses as f64),
+            avg_hold_us: ratio(self.hold_num, self.hold_den),
+        }
+    }
+}
+
+/// Build the blotter and summary through the same incremental accounting.
+pub fn compute(fills: &[FillEvent]) -> (Vec<BlotterRow>, TradeStats) {
+    let mut acc = Accumulator::default();
+    let rows = fills.iter().map(|f| acc.push(f)).collect();
+    (rows, acc.stats())
 }
 
 #[cfg(test)]

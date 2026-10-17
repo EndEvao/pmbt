@@ -16,6 +16,7 @@ pub mod parquet;
 pub mod record;
 pub mod series;
 pub mod stats;
+pub mod stream;
 
 use std::path::Path;
 

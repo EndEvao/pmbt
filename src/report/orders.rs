@@ -44,57 +44,75 @@ pub struct OrderStats {
 /// `fills` is the run's fill count, which the events don't carry (a fill is
 /// reported through `on_fill`, not `on_order`) — so it is passed in.
 pub fn compute(events: &[OrderEvent], fills: u64) -> OrderStats {
-    let count = |kind: OrderEventKind| events.iter().filter(|e| e.kind == kind).count() as u64;
-    let placed = count(OrderEventKind::Placed);
-    let rested = count(OrderEventKind::Rested);
-    let cancelled = count(OrderEventKind::Cancelled);
-    let expired = count(OrderEventKind::Expired);
+    let mut acc = Accumulator::default();
+    for event in events {
+        acc.push(event);
+    }
+    acc.stats(fills)
+}
 
-    // Time in queue: pair each `Rested` with the event that ended it. Orders
-    // that filled away entirely have no ending event, so they are excluded —
-    // the average is over orders whose full lifetime we can see.
-    let mut total_us = 0i64;
-    let mut max_us = 0i64;
-    let mut finished = 0u64;
-    for start in events.iter().filter(|e| e.kind == OrderEventKind::Rested) {
-        let ended = events.iter().find(|e| {
-            e.id == start.id
-                && e.ts >= start.ts
-                && matches!(e.kind, OrderEventKind::Cancelled | OrderEventKind::Expired)
-        });
-        if let Some(end) = ended {
-            let waited = end.ts - start.ts;
-            total_us += waited;
-            max_us = max_us.max(waited);
-            finished += 1;
+/// Live resting orders only; completed orders leave this map immediately.
+#[derive(Default)]
+pub(crate) struct Accumulator {
+    starts: std::collections::HashMap<u64, i64>,
+    placed: u64,
+    rested: u64,
+    cancelled: u64,
+    expired: u64,
+    total_us: i64,
+    max_us: i64,
+    finished: u64,
+}
+impl Accumulator {
+    pub fn filled(&mut self, id: u64) {
+        self.starts.remove(&id);
+    }
+    pub fn push(&mut self, event: &OrderEvent) {
+        match event.kind {
+            OrderEventKind::Placed => self.placed += 1,
+            OrderEventKind::Rested => {
+                self.rested += 1;
+                self.starts.insert(event.id, event.ts);
+            }
+            OrderEventKind::Cancelled | OrderEventKind::Expired => {
+                if event.kind == OrderEventKind::Cancelled {
+                    self.cancelled += 1;
+                } else {
+                    self.expired += 1;
+                }
+                if let Some(start) = self.starts.remove(&event.id) {
+                    let waited = event.ts - start;
+                    self.total_us += waited;
+                    self.max_us = self.max_us.max(waited);
+                    self.finished += 1;
+                }
+            }
         }
     }
-
-    // An order leaves the book by filling, being cancelled, or expiring. What
-    // rested but never ended must have filled away.
-    let filled_away = rested.saturating_sub(cancelled + expired);
-
-    OrderStats {
-        placed,
-        rested,
-        cancelled,
-        expired,
-        fill_ratio: if rested > 0 {
-            filled_away as f64 / rested as f64
-        } else {
-            0.0
-        },
-        cancel_rate: if fills > 0 {
-            cancelled as f64 / fills as f64
-        } else {
-            0.0
-        },
-        mean_time_in_queue_us: if finished > 0 {
-            total_us as f64 / finished as f64
-        } else {
-            0.0
-        },
-        max_time_in_queue_us: max_us,
+    pub fn stats(&self, fills: u64) -> OrderStats {
+        OrderStats {
+            placed: self.placed,
+            rested: self.rested,
+            cancelled: self.cancelled,
+            expired: self.expired,
+            fill_ratio: if self.rested > 0 {
+                self.rested.saturating_sub(self.cancelled + self.expired) as f64
+                    / self.rested as f64
+            } else {
+                0.0
+            },
+            cancel_rate: if fills > 0 {
+                self.cancelled as f64 / fills as f64
+            } else {
+                0.0
+            },
+            mean_time_in_queue_us: if self.finished > 0 {
+                self.total_us as f64 / self.finished as f64
+            } else {
+                0.0
+            },
+            max_time_in_queue_us: self.max_us,
+        }
     }
 }
 
@@ -111,6 +129,18 @@ mod tests {
             price: Some(0.35),
             quantity: 100.0,
         }
+    }
+
+    #[test]
+    fn completed_makers_release_streaming_history() {
+        let mut acc = Accumulator::default();
+        for id in 0..10_000 {
+            acc.push(&event(0, id, OrderEventKind::Placed));
+            acc.push(&event(1, id, OrderEventKind::Rested));
+            acc.filled(id);
+            assert!(acc.starts.is_empty());
+        }
+        assert_eq!(acc.stats(10_000).fill_ratio, 1.0);
     }
 
     #[test]

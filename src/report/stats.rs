@@ -88,7 +88,25 @@ pub fn compute(
 ) -> Stats {
     let curve = series::equity_curve(samples, result);
     let grid = series::resample_uniform(&curve, grid_us);
-    let returns = log_returns(&grid);
+    from_grid(
+        &grid,
+        result,
+        grid_us,
+        max_drawdown(&curve),
+        exposure(samples),
+        turnover(fills, result.initial_capital),
+    )
+}
+
+pub(crate) fn from_grid(
+    grid: &[f64],
+    result: &BacktestResult,
+    grid_us: i64,
+    drawdown: MaxDrawdown,
+    exposure: f64,
+    turnover: f64,
+) -> Stats {
+    let returns = log_returns(grid);
 
     let bar_seconds = grid_us as f64 / 1_000_000.0;
     let bars_per_year = SECONDS_PER_YEAR / bar_seconds;
@@ -114,9 +132,9 @@ pub fn compute(
         sortino_raw,
         annual_vol: sd * annualize,
         pct_positive_bars: fraction(&returns, |r| *r > 0.0),
-        max_drawdown: max_drawdown(&curve),
-        exposure: exposure(samples),
-        turnover: turnover(fills, result.initial_capital),
+        max_drawdown: drawdown,
+        exposure,
+        turnover,
     }
 }
 
@@ -231,6 +249,82 @@ fn turnover(fills: &[super::record::FillEvent], initial_capital: f64) -> f64 {
     }
     let notional: f64 = fills.iter().map(|f| f.price * f.qty).sum();
     notional / initial_capital
+}
+
+/// Path statistics need only the previous sample and running peak.
+pub(crate) struct PathAccumulator {
+    pub first_ts: Option<i64>,
+    pub last_ts: Option<i64>,
+    last_qty: f64,
+    exposed: i64,
+    peak: f64,
+    peak_ts: i64,
+    pub drawdown: MaxDrawdown,
+}
+impl Default for PathAccumulator {
+    fn default() -> Self {
+        Self {
+            first_ts: None,
+            last_ts: None,
+            last_qty: 0.0,
+            exposed: 0,
+            peak: f64::NEG_INFINITY,
+            peak_ts: 0,
+            drawdown: MaxDrawdown {
+                frac: 0.0,
+                dollars: 0.0,
+                peak_ts: 0,
+                trough_ts: 0,
+                duration_us: 0,
+            },
+        }
+    }
+}
+impl PathAccumulator {
+    pub fn observe(&mut self, ts: i64, qty: f64, equity: f64) {
+        if let Some(last) = self.last_ts {
+            if self.last_qty != 0.0 {
+                self.exposed += ts - last;
+            }
+        } else {
+            self.first_ts = Some(ts);
+            self.drawdown.peak_ts = ts;
+            self.drawdown.trough_ts = ts;
+        }
+        self.last_ts = Some(ts);
+        self.last_qty = qty;
+        if equity > self.peak {
+            self.peak = equity;
+            self.peak_ts = ts;
+        }
+        let dollars = self.peak - equity;
+        let frac = if self.peak > 0.0 {
+            dollars / self.peak
+        } else {
+            0.0
+        };
+        if frac > self.drawdown.frac {
+            self.drawdown = MaxDrawdown {
+                frac,
+                dollars,
+                peak_ts: self.peak_ts,
+                trough_ts: ts,
+                duration_us: ts - self.peak_ts,
+            };
+        }
+    }
+    pub fn exposure(&self) -> f64 {
+        let duration = self.last_ts.unwrap_or(0) - self.first_ts.unwrap_or(0);
+        if duration > 0 {
+            self.exposed as f64 / duration as f64
+        } else {
+            0.0
+        }
+    }
+    pub fn grid_us(&self) -> i64 {
+        ((self.last_ts.unwrap_or(0) - self.first_ts.unwrap_or(0)).max(1) / series::TARGET_BARS)
+            .max(series::DEFAULT_GRID_US)
+    }
 }
 
 #[cfg(test)]

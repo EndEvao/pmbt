@@ -33,6 +33,14 @@ pub trait Recorder {
     /// event's timestamp; sample the portfolio without publishing new depth.
     fn on_event(&mut self, _state: &MarketState, _portfolio: &Portfolio, _quotes: Quotes) {}
 
+    /// Surface an earlier sink failure before the engine advances again.
+    fn check(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    /// A maker order completely filled; streaming analytics can release its state.
+    fn on_order_filled(&mut self, _id: u64) {}
+
     /// A single fill just booked into the portfolio, inside the execute loop.
     /// `ts` is the execution timestamp (the snapshot it filled against, which
     /// under latency is later than the order's submission).
@@ -220,6 +228,17 @@ impl TimeSeriesRecorder {
 
     pub fn orders(&self) -> &[OrderEvent] {
         &self.orders
+    }
+
+    pub(crate) fn clear_buffers(&mut self) {
+        self.samples.clear();
+        self.fills.clear();
+        self.depth.clear();
+        self.orders.clear();
+    }
+
+    pub(crate) fn buffered_rows(&self) -> usize {
+        self.samples.len() + self.fills.len() + self.depth.len() + self.orders.len()
     }
 
     /// Capture the top-N levels of a side into plain `f64` pairs.
