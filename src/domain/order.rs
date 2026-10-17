@@ -109,26 +109,43 @@ pub struct OrderRequest {
     tif: TimeInForce,
 }
 
+/// Validation errors are returned by the checked constructors in every build.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+pub enum OrderRequestError {
+    #[error("order quantity must be finite and positive")]
+    InvalidQuantity,
+    #[error("a market order requires FOK or FAK time-in-force")]
+    RestingMarketOrder,
+}
+
 impl OrderRequest {
-    /// A marketable order — no price cap, so it can never rest. Restricted to
-    /// FOK/FAK: a price-less order that asked to rest would be meaningless.
+    /// Construct an order from validated strategy constants.
+    /// Panics on invalid input in every build; use `try_market` for external input.
     pub fn market(market_id: MarketId, side: OrderSide, quantity: f64, tif: TimeInForce) -> Self {
-        debug_assert!(quantity.is_finite() && quantity > 0.0);
-        debug_assert!(
-            matches!(tif, TimeInForce::Fok | TimeInForce::Fak),
-            "a market (price-less) order can't rest — use FOK or FAK"
-        );
-        Self {
+        Self::try_market(market_id, side, quantity, tif).expect("invalid market order")
+    }
+
+    pub fn try_market(
+        market_id: MarketId,
+        side: OrderSide,
+        quantity: f64,
+        tif: TimeInForce,
+    ) -> Result<Self, OrderRequestError> {
+        Self::check_quantity(quantity)?;
+        if !matches!(tif, TimeInForce::Fok | TimeInForce::Fak) {
+            return Err(OrderRequestError::RestingMarketOrder);
+        }
+        Ok(Self {
             market_id,
             side,
             quantity,
             limit_price: None,
             tif,
-        }
+        })
     }
 
-    /// A limit order at `price`. The price is on-grid by construction, so there
-    /// is nothing to validate here.
+    /// Construct an order from validated strategy constants.
+    /// Panics on invalid input in every build; use `try_limit` for external input.
     pub fn limit(
         market_id: MarketId,
         side: OrderSide,
@@ -136,13 +153,31 @@ impl OrderRequest {
         price: Price,
         tif: TimeInForce,
     ) -> Self {
-        debug_assert!(quantity.is_finite() && quantity > 0.0);
-        Self {
+        Self::try_limit(market_id, side, quantity, price, tif).expect("invalid limit order")
+    }
+
+    pub fn try_limit(
+        market_id: MarketId,
+        side: OrderSide,
+        quantity: f64,
+        price: Price,
+        tif: TimeInForce,
+    ) -> Result<Self, OrderRequestError> {
+        Self::check_quantity(quantity)?;
+        Ok(Self {
             market_id,
             side,
             quantity,
             limit_price: Some(price),
             tif,
+        })
+    }
+
+    fn check_quantity(quantity: f64) -> Result<(), OrderRequestError> {
+        if quantity.is_finite() && quantity > 0.0 {
+            Ok(())
+        } else {
+            Err(OrderRequestError::InvalidQuantity)
         }
     }
 
@@ -196,7 +231,10 @@ impl Order {
         side: OrderSide,
         limit_price: Option<Price>,
     ) -> Self {
-        debug_assert!(quantity.is_finite() && quantity > 0.0);
+        assert!(
+            quantity.is_finite() && quantity > 0.0,
+            "invalid order quantity"
+        );
         Self {
             order_id,
             timestamp,
@@ -255,5 +293,49 @@ impl Order {
             panic!("Cannot fill a canceled order");
         }
         self.status = OrderStatus::Filled;
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+    fn id() -> MarketId {
+        MarketId::new("token".into())
+    }
+    #[test]
+    fn checked_constructors_reject_invalid_quantities_and_market_tif() {
+        for qty in [0., -1., f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                OrderRequest::try_market(id(), OrderSide::Buy, qty, TimeInForce::Fok),
+                Err(OrderRequestError::InvalidQuantity)
+            );
+            assert_eq!(
+                OrderRequest::try_limit(
+                    id(),
+                    OrderSide::Sell,
+                    qty,
+                    Price::new(500_000).unwrap(),
+                    TimeInForce::Gtc
+                ),
+                Err(OrderRequestError::InvalidQuantity)
+            );
+        }
+        for tif in [
+            TimeInForce::Gtc,
+            TimeInForce::Gtd {
+                expires_at: 180_000_000,
+            },
+        ] {
+            assert_eq!(
+                OrderRequest::try_market(id(), OrderSide::Buy, 1., tif),
+                Err(OrderRequestError::RestingMarketOrder)
+            );
+        }
+        assert!(OrderRequest::try_market(id(), OrderSide::Buy, 1., TimeInForce::Fak).is_ok());
+    }
+    #[test]
+    #[should_panic(expected = "invalid market order")]
+    fn convenience_constructor_is_checked_in_release_too() {
+        OrderRequest::market(id(), OrderSide::Buy, f64::NAN, TimeInForce::Fok);
     }
 }
