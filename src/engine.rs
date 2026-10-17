@@ -111,8 +111,8 @@ struct Tally {
     expired_gtd: u64,
 }
 
-/// An accepted order waiting out its latency window. Delay is constant per
-/// run, so FIFO order in the queue is also `execute_at` order.
+/// An accepted order waiting out its latency window. Pending orders are
+/// sorted by execution deadline, with submission order breaking ties.
 struct Pending {
     order: Order,
     request: OrderRequest,
@@ -586,7 +586,7 @@ impl Engine {
         feed_us: i64,
         now: i64,
     ) -> Option<i64> {
-        // Both queues are ordered by their deadline (constant delay per run),
+        // Both queues are ordered by their deadline,
         // so the front is the earliest.
         let candidates = [
             pending.front().map(|p| p.execute_at),
@@ -834,11 +834,18 @@ impl Engine {
         } else {
             self.sim.latency.execution_delay_us()
         };
-        pending.push_back(Pending {
-            order,
-            request,
-            execute_at: seen.timestamp + delay,
-        });
+        let execute_at = seen.timestamp + delay;
+        // Limits and market orders have different delays. Insert after equal
+        // deadlines so submission order remains the tie-breaker.
+        let index = pending.partition_point(|p| p.execute_at <= execute_at);
+        pending.insert(
+            index,
+            Pending {
+                order,
+                request,
+                execute_at,
+            },
+        );
     }
 
     /// Execute every pending order whose latency window has elapsed at this

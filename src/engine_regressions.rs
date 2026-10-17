@@ -139,3 +139,60 @@ fn funded_partial_limit_still_fills_and_rests() {
         assert!((r.final_cash - r.resting_reserved).abs() < 1e-12);
     }
 }
+
+use crate::report::record::{RecorderConfig, TimeSeriesRecorder};
+use std::time::Duration;
+#[test]
+fn faster_limit_order_must_not_wait_behind_delayed_market_order() {
+    let mut s = Script::default();
+    s.books.insert(
+        0,
+        vec![
+            buy(1.),
+            Action::Place(OrderRequest::limit(
+                id(),
+                OrderSide::Buy,
+                1.,
+                p(0.5),
+                TimeInForce::Fok,
+            )),
+        ],
+    );
+    let mut sim = Simulation::zero();
+    sim.latency.taker_delay = Duration::from_secs(3);
+    let feed = MergedFeed::new(
+        vec![Ok(book(0, 100.)), Ok(book(4_000_000, 100.))].into_iter(),
+        std::iter::empty(),
+    );
+    let mut rec = TimeSeriesRecorder::new(RecorderConfig::default());
+    Engine::new(100., Box::new(SweepFillModel), sim)
+        .run_recorded(feed, &mut s, None, &mut rec)
+        .unwrap();
+    assert_eq!(
+        rec.fills().iter().map(|f| f.ts).collect::<Vec<_>>(),
+        vec![0, 3_000_000]
+    );
+}
+
+#[test]
+fn equal_execution_deadlines_preserve_submission_order() {
+    let mut s = Script::default();
+    s.books.insert(0, vec![buy(3.), buy(7.)]);
+    let mut sim = Simulation::zero();
+    sim.latency.transit = Duration::from_micros(1);
+    let feed = MergedFeed::new(
+        vec![Ok(book(0, 10.)), Ok(book(2, 10.))].into_iter(),
+        std::iter::empty(),
+    );
+    let mut rec = TimeSeriesRecorder::new(RecorderConfig::default());
+    Engine::new(100., Box::new(SweepFillModel), sim)
+        .run_recorded(feed, &mut s, None, &mut rec)
+        .unwrap();
+    assert_eq!(
+        rec.fills()
+            .iter()
+            .map(|f| (f.ts, f.qty))
+            .collect::<Vec<_>>(),
+        vec![(1, 3.), (1, 7.)]
+    );
+}
