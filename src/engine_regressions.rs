@@ -196,3 +196,46 @@ fn equal_execution_deadlines_preserve_submission_order() {
         vec![(1, 3.), (1, 7.)]
     );
 }
+
+#[test]
+fn wakeup_on_book_timestamp_must_not_block_later_wakeups() {
+    let mut s = Script::default();
+    s.books
+        .insert(0, vec![Action::WakeAt(100), Action::WakeAt(200)]);
+    let feed = MergedFeed::new(
+        vec![Ok(book(0, 10.)), Ok(book(100, 10.)), Ok(book(300, 10.))].into_iter(),
+        std::iter::empty(),
+    );
+    Engine::new(100., Box::new(SweepFillModel), Simulation::zero())
+        .run(feed, &mut s, None)
+        .unwrap();
+    assert!(
+        s.woke.contains(&200),
+        "wakeups actually delivered: {:?}",
+        s.woke
+    );
+}
+
+#[test]
+fn coincident_wakeups_fire_once_with_and_without_perception() {
+    for perception in [false, true] {
+        let mut s = Script::default();
+        s.books
+            .insert(0, vec![Action::WakeAt(100), Action::WakeAt(200)]);
+        let mut sim = Simulation::zero();
+        sim.perception = perception;
+        if perception {
+            sim.latency.feed = Duration::from_micros(10);
+        }
+        let feed = MergedFeed::new(
+            vec![Ok(book(0, 10.)), Ok(book(100, 10.)), Ok(book(300, 10.))].into_iter(),
+            std::iter::empty(),
+        );
+        Engine::new(100., Box::new(SweepFillModel), sim)
+            .run(feed, &mut s, None)
+            .unwrap();
+        for timestamp in [100, 200] {
+            assert_eq!(s.woke.iter().filter(|&&t| t == timestamp).count(), 1);
+        }
+    }
+}

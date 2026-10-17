@@ -394,7 +394,8 @@ impl Engine {
             // through its own hook, on the last book it was shown — never the
             // carried-forward one, which under perception it is not entitled to
             // see yet.
-            if is_tick {
+            let wake_due = self.wakeups.first().is_some_and(|&at| at <= now);
+            if is_tick || wake_due {
                 let shown = if self.sim.perception {
                     last_seen.as_ref()
                 } else {
