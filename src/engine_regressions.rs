@@ -239,3 +239,73 @@ fn coincident_wakeups_fire_once_with_and_without_perception() {
         }
     }
 }
+
+#[test]
+fn intrabook_roundtrip_records_equity_exposure_without_new_depth() {
+    let mut s = Script::default();
+    s.books.insert(
+        0,
+        vec![Action::WakeAt(1_000_000), Action::WakeAt(2_000_000)],
+    );
+    s.ticks.insert(1_000_000, vec![buy(10.)]);
+    s.ticks.insert(
+        2_000_000,
+        vec![Action::Place(OrderRequest::market(
+            id(),
+            OrderSide::Sell,
+            10.,
+            TimeInForce::Fok,
+        ))],
+    );
+    let feed = MergedFeed::new(
+        vec![Ok(book(0, 10.)), Ok(book(3_000_000, 10.))].into_iter(),
+        std::iter::empty(),
+    );
+    let mut rec = TimeSeriesRecorder::new(RecorderConfig::default());
+    let r = Engine::new(100., Box::new(SweepFillModel), Simulation::zero())
+        .run_recorded(feed, &mut s, None, &mut rec)
+        .unwrap();
+    assert_eq!(
+        rec.samples()
+            .iter()
+            .map(|s| (s.ts, s.qty))
+            .collect::<Vec<_>>(),
+        vec![(0, 0.), (1_000_000, 10.), (2_000_000, 0.), (3_000_000, 0.)]
+    );
+    assert_eq!(
+        rec.depth().iter().map(|d| d.ts).collect::<Vec<_>>(),
+        vec![0, 3_000_000]
+    );
+    assert_eq!(rec.samples()[2].cash, r.final_cash);
+    let stats = crate::report::stats::compute(rec.samples(), rec.fills(), &r, 1_000_000);
+    assert!((stats.exposure - 1. / 3.).abs() < 1e-12);
+}
+#[test]
+fn trailing_trade_after_last_book_is_sampled() {
+    let mut s = Script::default();
+    s.books.insert(
+        0,
+        vec![Action::Place(OrderRequest::limit(
+            id(),
+            OrderSide::Buy,
+            10.,
+            p(0.4),
+            TimeInForce::Gtc,
+        ))],
+    );
+    let mut sim = Simulation::zero();
+    sim.queue = QueueModel::Front;
+    let trade = Trade::new(1_000_000, p(0.4), 10., OrderSide::Sell, id());
+    let feed = MergedFeed::new(
+        vec![Ok(book(0, 10.))].into_iter(),
+        vec![Ok(trade)].into_iter(),
+    );
+    let mut rec = TimeSeriesRecorder::new(RecorderConfig::default());
+    let r = Engine::new(100., Box::new(SweepFillModel), sim)
+        .run_recorded(feed, &mut s, None, &mut rec)
+        .unwrap();
+    assert_eq!(rec.samples().last().unwrap().ts, 1_000_000);
+    assert_eq!(rec.samples().last().unwrap().cash, r.final_cash);
+    assert_eq!(rec.samples().last().unwrap().qty, 10.);
+    assert_eq!(rec.depth().len(), 1);
+}

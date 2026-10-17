@@ -29,6 +29,10 @@ pub trait Recorder {
     /// and including this instant.
     fn on_snapshot(&mut self, _state: &MarketState, _portfolio: &Portfolio, _quotes: Quotes) {}
 
+    /// A non-book event has finished. The book is carried forward at the
+    /// event's timestamp; sample the portfolio without publishing new depth.
+    fn on_event(&mut self, _state: &MarketState, _portfolio: &Portfolio, _quotes: Quotes) {}
+
     /// A single fill just booked into the portfolio, inside the execute loop.
     /// `ts` is the execution timestamp (the snapshot it filled against, which
     /// under latency is later than the order's submission).
@@ -228,10 +232,8 @@ impl TimeSeriesRecorder {
             })
             .collect()
     }
-}
 
-impl Recorder for TimeSeriesRecorder {
-    fn on_snapshot(&mut self, state: &MarketState, portfolio: &Portfolio, quotes: Quotes) {
+    fn sample(&mut self, state: &MarketState, portfolio: &Portfolio, quotes: Quotes) {
         let initial = *self
             .initial_capital
             .get_or_insert_with(|| portfolio.initial_capital());
@@ -266,7 +268,16 @@ impl Recorder for TimeSeriesRecorder {
             quote_bid: quotes.bid,
             quote_ask: quotes.ask,
         });
+    }
+}
 
+impl Recorder for TimeSeriesRecorder {
+    fn on_event(&mut self, state: &MarketState, portfolio: &Portfolio, quotes: Quotes) {
+        self.sample(state, portfolio, quotes);
+    }
+
+    fn on_snapshot(&mut self, state: &MarketState, portfolio: &Portfolio, quotes: Quotes) {
+        self.sample(state, portfolio, quotes);
         // Thin the depth capture to at most one frame per interval.
         let due = self
             .last_depth_ts

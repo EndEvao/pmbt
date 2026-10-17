@@ -413,21 +413,16 @@ impl Engine {
 
             depleted = book.into_depleted();
 
-            // Sample the fully-settled instant: this snapshot's true book plus
-            // the portfolio after every fill due at or before it. Last thing in
-            // the loop so the price and the equity mark line up in time.
-            // Only a real book is a sample: a tick changes the portfolio's
-            // clock, not the market, and recording it would put duplicate
-            // points on the equity curve at prices that never reprinted.
-            if !is_tick {
-                recorder.on_snapshot(
-                    state,
-                    &self.portfolio,
-                    Quotes {
-                        bid: self.resting.best(OrderSide::Buy).map(|p| p.as_f64()),
-                        ask: self.resting.best(OrderSide::Sell).map(|p| p.as_f64()),
-                    },
-                );
+            // Every event can change the portfolio. Keep the book/depth
+            // notification separate from carried-mark portfolio samples.
+            let quotes = Quotes {
+                bid: self.resting.best(OrderSide::Buy).map(|p| p.as_f64()),
+                ask: self.resting.best(OrderSide::Sell).map(|p| p.as_f64()),
+            };
+            if is_tick {
+                recorder.on_event(state, &self.portfolio, quotes);
+            } else {
+                recorder.on_snapshot(state, &self.portfolio, quotes);
             }
         }
 
