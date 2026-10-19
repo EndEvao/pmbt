@@ -140,7 +140,10 @@ function run(model, width) {
   };
   get("report-data").textContent = JSON.stringify(model);
   let printed = false;
-  const document = { getElementById: get, documentElement: { dataset: {} } };
+  const document = {
+    getElementById: get,
+    documentElement: { dataset: { theme: "dark" } },
+  };
   const window = {
     print() {
       printed = true;
@@ -164,9 +167,9 @@ function run(model, width) {
   }
   assert.equal(get("benchmark-panel").hidden, false);
   get("theme").onclick();
-  assert.equal(document.documentElement.dataset.theme, "dark");
-  get("theme").onclick();
   assert.equal(document.documentElement.dataset.theme, "light");
+  get("theme").onclick();
+  assert.equal(document.documentElement.dataset.theme, "dark");
   get("print").onclick();
   assert.ok(printed);
   if (model.pts.length) {
@@ -268,7 +271,7 @@ for (const width of [380, 1120]) {
     get("market").textContent,
     `${populated.context.market_name} · Outcome: not supplied`,
   );
-  assert.ok(get("reconcile").textContent.includes("reconcile"));
+  assert.ok(get("reconcile").textContent.includes("RECONCILED"));
   const singleton = structuredClone(populated);
   singleton.pts = singleton.pts.slice(0, 1);
   run(singleton, width);
