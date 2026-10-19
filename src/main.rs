@@ -27,7 +27,7 @@ const INITIAL_CAPITAL: f64 = 10_000.0;
 
 const USAGE: &str = "usage:
   pmbt run <strategy> <book_snapshot_full.parquet>
-           [--config <profile.toml>]
+           [--config <profile.toml>] [--market-name <name>] [--outcome <label>]
            [--resolution 0|1] [--fill naive|sweep]
            [--latency zero|dublin|retail-eu|us-east] [--category <cat>]
            [--perception on|off] [--taker-delay on|off] [--fees on|off]
@@ -180,8 +180,14 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
     let mut report_path = None;
     let mut config_path = None;
     let mut record_dir = None;
+    let mut market_name = None;
+    let mut outcome = None;
     while let Some(flag) = args.next() {
         match flag.as_str() {
+            "--market-name" => {
+                market_name = Some(args.next().ok_or("--market-name requires a label")?)
+            }
+            "--outcome" => outcome = Some(args.next().ok_or("--outcome requires a label")?),
             "--config" => match args.next() {
                 Some(path) => config_path = Some(path),
                 None => return Err("--config takes a TOML profile path".into()),
@@ -271,13 +277,74 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
-            report::html::write_html(
+            let sim = resolved.simulation(category);
+            let queue = match sim.queue {
+                QueueModel::Front => "front",
+                QueueModel::Proportional => "proportional",
+                QueueModel::TradesOnly => "trades-only",
+            };
+            let context = report::html::ReportContext {
+                market_name: market_name.clone(),
+                outcome: outcome.clone(),
+                queue: Some(queue.into()),
+                tape_present: Path::new(&path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|n| n.strip_suffix("_book_snapshot_full.parquet"))
+                    .map(|stem| {
+                        Path::new(&path)
+                            .with_file_name(format!("{stem}_trades.parquet"))
+                            .is_file()
+                    }),
+                settings: vec![
+                    ("Fill model".into(), resolved.fill_name.clone()),
+                    ("Queue model".into(), queue.into()),
+                    (
+                        "Feed delay".into(),
+                        format!("{} ms", sim.latency.feed.as_secs_f64() * 1000.0),
+                    ),
+                    (
+                        "Order transit".into(),
+                        format!("{} ms", sim.latency.transit.as_secs_f64() * 1000.0),
+                    ),
+                    (
+                        "Taker hold".into(),
+                        format!("{} ms", sim.latency.taker_delay.as_secs_f64() * 1000.0),
+                    ),
+                    (
+                        "Perception delay".into(),
+                        if sim.perception { "on" } else { "off" }.into(),
+                    ),
+                    ("Taker fee coefficient".into(), sim.fee_rate.to_string()),
+                    (
+                        "Category".into(),
+                        category.map_or("unspecified".into(), |c| format!("{c:?}").to_lowercase()),
+                    ),
+                    (
+                        "Resolution supplied".into(),
+                        resolution.map_or("unresolved".into(), |p| p.to_decimal_string()),
+                    ),
+                    ("Order size".into(), "100 shares".into()),
+                    (
+                        "Inventory cap".into(),
+                        if matches!(name.as_str(), "quoter" | "quoter-improve" | "accumulator") {
+                            "500 shares"
+                        } else {
+                            "not configured"
+                        }
+                        .into(),
+                    ),
+                    ("Engine version".into(), env!("CARGO_PKG_VERSION").into()),
+                ],
+            };
+            report::html::write_html_with_context(
                 Path::new(out),
                 &name,
                 subtitle,
                 &result,
                 &recorder,
                 resolution.map(|p| p.as_f64()),
+                &context,
             )?;
             println!("wrote report to {out}");
         }

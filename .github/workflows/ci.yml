@@ -19,4 +19,9 @@ jobs:
         run: cargo +stable test --locked
       - name: Release tests
         run: cargo +stable test --locked --release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Report JavaScript smoke checks
+        run: node scripts/check_report.mjs
       # Captured market data is not committed. Run ignored replay suites locally.

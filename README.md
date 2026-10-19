@@ -143,10 +143,10 @@ total_pnl = trading (realized)  +  settlement  −  fees
 ```
 
 - **Trading** — gross P&L realized by buying and selling during the run.
-- **Settlement** — terminal redemption. `--resolution 0|1` states what the token redeemed at; the position settles through the ledger **after the feed drains**, never through the order pipeline, because redemption is not a trade. An unresolved run reports its holding unmarked (open positions are never marked to market).
+- **Settlement** — terminal redemption. `--resolution 0|1` states what the token redeemed at; the position settles through the ledger **after the feed drains**, never through the order pipeline, because redemption is not a trade. The engine summary carries an unresolved holding at cost. The HTML report additionally shows its marked equity and separates unrealized P&L from realized trading.
 - **Fees** — total taker fees, always ≥ 0.
 
-Reporting turns a run into an artifact you can read or analyse. The HTML report draws the price/PnL curve, the depth ladder, a trade blotter, and a statistics block: **Sharpe, Sortino, and volatility** computed on the equity curve resampled to a uniform grid (with the grid period and annualization factor printed alongside, so the numbers are never a silent assumption), plus path metrics — max drawdown, exposure, turnover, total return — on the raw event-timed data. The terminal summary carries the order flow that produced the P&L: fills (with the maker/taker split), rejections, cancels, cancels missed, orders expired in flight, resting orders left open, and GTD orders the exchange retired.
+Reporting turns a run into an artifact you can read or analyse. The single-run HTML report opens with five headline metrics, synchronized P&L/drawdown/inventory charts, and a visible attribution waterfall. The full-capital benchmark has an optional separate scale; the synthetic complement is also opt-in. Configuration, input coverage, execution diagnostics, a paginated blotter, and depth inspection follow. Charts retain bucket extrema; calculations use the full event history. Capital deployment is time-weighted inventory cost divided by initial capital, excluding order reservations. Additional statistics include: **Sharpe, Sortino, and volatility** computed on the equity curve resampled to a uniform grid (with the grid period and annualization factor printed alongside, so the numbers are never a silent assumption), plus path metrics — max drawdown, exposure, turnover, total return — on the raw event-timed data. The terminal summary carries the order flow that produced the P&L: fills (with the maker/taker split), rejections, cancels, cancels missed, orders expired in flight, resting orders left open, and GTD orders the exchange retired.
 
 ### TOML features + config
 
@@ -221,7 +221,7 @@ cargo run -- run <strategy> <book_snapshot_full.parquet> [--resolution 0|1] [--f
                  [--latency zero|dublin|retail-eu|us-east] [--category <cat>] [--queue proportional|front|trades-only]
 
 # a maker strategy with the exchange's friction and an HTML report
-cargo run -- run quoter <book.parquet> --resolution 1 --fill sweep --category sports --latency dublin --report out.html
+cargo run -- run quoter <book.parquet> --resolution 1 --fill sweep --category sports --latency dublin --market-name "Market question" --outcome "Yes" --report out.html
 
 # keep the realism settings in a TOML profile (CLI flags still override)
 cargo run -- run <strategy> <book.parquet> --config universes/single.toml

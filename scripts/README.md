@@ -1,7 +1,7 @@
 # scripts/
 
-Data-acquisition tooling. Everything here produces inputs for `pmbt`; nothing
-here is part of the engine.
+Data acquisition, export helpers, and report validation. These utilities are
+separate from the engine.
 
 ## capture_ws.py — raw Polymarket websocket capture
 
@@ -39,3 +39,17 @@ python3 -m venv .venv && .venv/bin/pip install telonex
 export TELONEX_API_KEY=...
 .venv/bin/python scripts/telonex_pull.py
 ```
+
+## check_report.mjs — report JavaScript smoke checks
+
+Run `node scripts/check_report.mjs` (Node 20+) to exercise the embedded report
+script with empty, unresolved, and single-timestamp fixtures. An optional HTML
+path additionally checks a generated report:
+
+```sh
+node scripts/check_report.mjs report-preview.html
+```
+
+Checks cover toggles, keyboard inspection, pagination, depth controls, and
+finite output at narrow/wide chart dimensions. Uses a minimal DOM stub; this
+is not browser layout or screenshot validation. No npm dependencies required.

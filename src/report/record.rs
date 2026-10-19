@@ -177,13 +177,25 @@ impl Default for RecorderConfig {
     }
 }
 
+/// Coverage indicators counted only on real book snapshots, not timer/trade events.
+#[derive(Debug, Default, Serialize)]
+pub struct BookQuality {
+    pub snapshots: u64,
+    pub one_sided: u64,
+    pub locked_or_crossed: u64,
+    pub max_interval_us: i64,
+    #[serde(skip)]
+    last_ts: Option<i64>,
+}
+
 /// The working recorder: accumulates the full price/equity series (one
 /// [`Sample`] per book, trade, or timer event), every [`FillEvent`] exactly, and time-thinned
-/// [`DepthFrame`]s. Marking is continuous: when a snapshot has no mid (a
-/// one-sided book), equity is marked against the last price seen, so the curve
+/// [`DepthFrame`]s. Marking is continuous: equity uses mid, then an available touch, then the
+/// last known mark if the book is empty, so the curve
 /// never gaps or teleports to zero while a position is held.
 pub struct TimeSeriesRecorder {
     cfg: RecorderConfig,
+    quality: BookQuality,
     /// Captured once, from the first snapshot's portfolio.
     initial_capital: Option<f64>,
     /// Last price used to mark the book; carries a mark across one-sided
@@ -200,6 +212,7 @@ impl TimeSeriesRecorder {
     pub fn new(cfg: RecorderConfig) -> Self {
         Self {
             cfg,
+            quality: BookQuality::default(),
             initial_capital: None,
             last_mark: None,
             last_depth_ts: None,
@@ -208,6 +221,13 @@ impl TimeSeriesRecorder {
             depth: Vec::new(),
             orders: Vec::new(),
         }
+    }
+
+    pub fn quality(&self) -> &BookQuality {
+        &self.quality
+    }
+    pub fn config(&self) -> RecorderConfig {
+        self.cfg
     }
 
     pub fn initial_capital(&self) -> f64 {
@@ -296,6 +316,17 @@ impl Recorder for TimeSeriesRecorder {
     }
 
     fn on_snapshot(&mut self, state: &MarketState, portfolio: &Portfolio, quotes: Quotes) {
+        self.quality.snapshots += 1;
+        if state.bid().is_none() || state.ask().is_none() {
+            self.quality.one_sided += 1;
+        }
+        if state.spread().is_some_and(|spread| spread <= 0) {
+            self.quality.locked_or_crossed += 1;
+        }
+        if let Some(last) = self.quality.last_ts {
+            self.quality.max_interval_us = self.quality.max_interval_us.max(state.timestamp - last);
+        }
+        self.quality.last_ts = Some(state.timestamp);
         self.sample(state, portfolio, quotes);
         // Thin the depth capture to at most one frame per interval.
         let due = self
@@ -400,5 +431,30 @@ mod tests {
         );
         // Nothing to assert but the call compiling and being a no-op; the type
         // has no state. This documents the default-impl contract.
+    }
+    #[test]
+    fn book_quality_excludes_timer_samples_and_survives_buffer_flushes() {
+        let mut rec = TimeSeriesRecorder::new(RecorderConfig::default());
+        let portfolio = Portfolio::new(10_000.0);
+        rec.on_snapshot(&snapshot(0, 0.3, 0.4), &portfolio, Quotes::default());
+        rec.on_event(&snapshot(1_000, 0.5, 0.4), &portfolio, Quotes::default());
+        rec.on_snapshot(&snapshot(2_000, 0.5, 0.4), &portfolio, Quotes::default());
+        let one_sided = MarketState::new(
+            MarketId::new("token".into()),
+            5_000,
+            Box::from([]),
+            Box::from([Level {
+                price: Price::from_probability(0.4).unwrap(),
+                size: 100.0,
+            }]),
+        )
+        .unwrap();
+        rec.on_snapshot(&one_sided, &portfolio, Quotes::default());
+        assert_eq!(rec.quality().snapshots, 3);
+        assert_eq!(rec.quality().one_sided, 1);
+        assert_eq!(rec.quality().locked_or_crossed, 1);
+        assert_eq!(rec.quality().max_interval_us, 3_000);
+        rec.clear_buffers();
+        assert_eq!(rec.quality().snapshots, 3);
     }
 }
