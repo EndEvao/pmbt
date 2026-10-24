@@ -14,6 +14,7 @@ pub mod buyandsell;
 pub mod quoter;
 
 pub mod clob;
+pub mod config;
 pub mod convert;
 pub mod domain;
 pub mod engine;

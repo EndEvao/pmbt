@@ -54,63 +54,8 @@ pub struct MarketEntry {
     file: Option<PathBuf>,
 }
 
-/// Per-universe simulation defaults — the `[simulation]` section. Every
-/// field is optional; CLI flags override whatever is set here, and built-in
-/// defaults (fill naive, latency zero, perception off, taker delay on, fees
-/// on) fill the rest. Names stay strings at this layer — the registries that
-/// resolve them live in `main.rs`.
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SimulationConfig {
-    /// Fill model name (`naive` | `sweep`).
-    pub fill: Option<String>,
-    /// Latency preset name (`zero` | `dublin` | `retail-eu` | `us-east`).
-    pub latency: Option<String>,
-    /// Deliver snapshots to the strategy late by the feed component.
-    pub perception: Option<bool>,
-    /// Apply the exchange's category-based taker delay (off = counterfactual
-    /// "what if the exchange had no hold").
-    pub taker_delay: Option<bool>,
-    /// Apply the exchange's category-based taker fee (off = counterfactual
-    /// "what if trading were free").
-    pub fees: Option<bool>,
-    /// Market category — the axis that drives the taker delay (sports 3 s,
-    /// crypto/finance 250 ms) and the fee tier. Honoured by `run`/`compare`
-    /// through `--config`, where it saves the easily-forgotten `--category`
-    /// flag; **ignored by `batch`**, whose markets each carry their own.
-    pub category: Option<Category>,
-    /// Queue model for resting orders: `front` (optimistic bound),
-    /// `proportional` (default, neutral), `trades-only` (pessimistic bound).
-    /// Only affects strategies that rest limit orders.
-    pub queue: Option<String>,
-}
-
-/// A standalone simulation profile: any TOML carrying a `[simulation]` section.
-/// Deliberately lenient — unlike [`Universe`], unknown top-level keys are
-/// *ignored*, so a full universe file doubles as a profile and one run can
-/// reuse a universe's exact realism settings.
-#[derive(Debug, Default, Deserialize)]
-pub struct SimulationProfile {
-    #[serde(default)]
-    pub simulation: Option<SimulationConfig>,
-    /// Present only so a caller can tell the user their market entries are
-    /// being ignored — `--config` reads nothing but `[simulation]`.
-    #[serde(default)]
-    pub markets: Option<Vec<toml::Value>>,
-}
-
-impl SimulationProfile {
-    /// Load a profile from a TOML file. A file with no `[simulation]` section
-    /// is valid and simply changes nothing.
-    pub fn load(path: impl AsRef<Path>) -> Result<SimulationProfile, UniverseError> {
-        Ok(toml::from_str(&std::fs::read_to_string(path)?)?)
-    }
-
-    /// How many market entries this file carries (0 for a pure profile).
-    pub fn market_count(&self) -> usize {
-        self.markets.as_ref().map_or(0, Vec::len)
-    }
-}
+// Preserve the original public import paths.
+pub use crate::config::{SimulationConfig, SimulationProfile};
 
 /// A parsed, validated universe config.
 #[derive(Debug, Deserialize)]

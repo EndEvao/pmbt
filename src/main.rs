@@ -6,13 +6,14 @@ use std::process;
 use pmbt::accumulator::Accumulator;
 use pmbt::buyandhold::BuyAndHold;
 use pmbt::buyandsell::BuyAndSell;
+use pmbt::config::{
+    latency_preset, resolve, ResolvedSimulation, SimulationConfig, SimulationProfile,
+};
 use pmbt::convert::convert_capture;
 use pmbt::domain::order::TimeInForce;
 use pmbt::domain::types::Price;
-use pmbt::engine::{BacktestResult, Engine, Settlement, Simulation};
+use pmbt::engine::{BacktestResult, Engine, Settlement};
 use pmbt::feed::{FileFeed, MergedFeed};
-use pmbt::fill::fillmodel::{FillModel, NaiveFillModel};
-use pmbt::fill::sweep::SweepFillModel;
 use pmbt::latency::LatencyProfile;
 use pmbt::quoter::Quoter;
 use pmbt::report::{
@@ -21,7 +22,7 @@ use pmbt::report::{
 };
 use pmbt::resting::QueueModel;
 use pmbt::strategy::Strategy;
-use pmbt::universe::{self, Category, SimulationConfig, SimulationProfile, Universe};
+use pmbt::universe::{self, Category, Universe};
 
 const INITIAL_CAPITAL: f64 = 10_000.0;
 
@@ -97,39 +98,6 @@ fn build(name: &str) -> Option<Box<dyn Strategy>> {
     }
 }
 
-/// The fill-model registry, mirroring the strategy registry: `naive` fills
-/// full size at the touch (the baseline), `sweep` walks the book FOK.
-fn build_fill(name: &str) -> Option<Box<dyn FillModel>> {
-    match name {
-        "naive" => Some(Box::new(NaiveFillModel)),
-        "sweep" => Some(Box::new(SweepFillModel)),
-        _ => None,
-    }
-}
-
-/// The latency-preset registry: observer placement relative to the CLOB
-/// (AWS eu-west-2). `zero` (the default) reproduces latency-free backtests.
-fn build_latency(name: &str) -> Option<LatencyProfile> {
-    match name {
-        "zero" => Some(LatencyProfile::zero()),
-        "dublin" => Some(LatencyProfile::dublin()),
-        "retail-eu" => Some(LatencyProfile::retail_eu()),
-        "us-east" => Some(LatencyProfile::us_east()),
-        _ => None,
-    }
-}
-
-/// The queue-model registry: how much of the line ahead of a resting order we
-/// model. `proportional` is the default — see `resting::QueueModel`.
-fn build_queue(name: &str) -> Option<QueueModel> {
-    match name {
-        "front" => Some(QueueModel::Front),
-        "proportional" => Some(QueueModel::Proportional),
-        "trades-only" => Some(QueueModel::TradesOnly),
-        _ => None,
-    }
-}
-
 /// Category names for the run verb's `--category` flag (batch reads
 /// categories from the universe entries instead).
 fn build_category(name: &str) -> Option<Category> {
@@ -173,7 +141,7 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
     // run-only flags (--resolution, --category) plus the shared simulation
     // flags. --resolution is binary-only for now — this parser is the single
     // place a future 0.5 for voided/50-50 markets unlocks.
-    let mut sim_flags = SimFlags::default();
+    let mut sim_flags = SimulationConfig::default();
     let mut resolution = None;
     let mut category = None;
     let mut record_path = None;
@@ -231,8 +199,9 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
     // CLI flags override the profile, which overrides the built-in defaults —
     // the same precedence `batch` applies to a universe's [simulation].
     let profile = load_profile(config_path.as_ref())?;
-    let resolved = resolve_simulation(&sim_flags, profile.simulation.as_ref())?;
-    let category = category.or_else(|| profile.simulation.as_ref().and_then(|s| s.category));
+    sim_flags.category = category;
+    let resolved = resolve(profile.simulation.as_ref(), &sim_flags)?;
+    let category = resolved.category;
 
     let mut strategy = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
     // One Telonex file is one token's book, so the file choice *is* the
@@ -241,7 +210,7 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
 
     let engine = Engine::new(
         INITIAL_CAPITAL,
-        resolved.fill()?,
+        resolved.fill(),
         resolved.simulation(category),
     );
 
@@ -297,7 +266,7 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
                             .is_file()
                     }),
                 settings: vec![
-                    ("Fill model".into(), resolved.fill_name.clone()),
+                    ("Fill model".into(), resolved.fill_model.name().into()),
                     ("Queue model".into(), queue.into()),
                     (
                         "Feed delay".into(),
@@ -460,7 +429,7 @@ fn cmd_compare(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
         return Err(USAGE.into());
     };
 
-    let mut sim_flags = SimFlags::default();
+    let mut sim_flags = SimulationConfig::default();
     let mut resolution = None;
     let mut category = None;
     let mut record_path = None;
@@ -513,8 +482,9 @@ fn cmd_compare(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
 
     // CLI flags override the profile, which overrides the built-in defaults.
     let profile = load_profile(config_path.as_ref())?;
-    let base = resolve_simulation(&sim_flags, profile.simulation.as_ref())?;
-    let category = category.or_else(|| profile.simulation.as_ref().and_then(|s| s.category));
+    sim_flags.category = category;
+    let base = resolve(profile.simulation.as_ref(), &sim_flags)?;
+    let category = base.category;
     let configs = build_compare_matrix(&axis, &base, &sim_flags)?;
     let ladder = axis == "realism";
     if ladder && category.is_none() {
@@ -531,7 +501,7 @@ fn cmd_compare(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
         let feed = open_feed(&[PathBuf::from(&path)])?;
         let engine = Engine::new(
             INITIAL_CAPITAL,
-            resolved.fill()?,
+            resolved.fill(),
             resolved.simulation(category),
         );
         let mut recorder = TimeSeriesRecorder::new(RecorderConfig::default());
@@ -578,30 +548,32 @@ fn cmd_compare(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
 }
 
 /// A single labelled config in a comparison matrix.
-type CompareConfig = (String, String, ResolvedSim);
+type CompareConfig = (String, String, ResolvedSimulation);
 
 /// Build the config matrix for a comparison axis. The base carries the fill
 /// model (and any CLI-set fields); each config overrides the realism knobs.
 fn build_compare_matrix(
     axis: &str,
-    base: &ResolvedSim,
-    flags: &SimFlags,
+    base: &ResolvedSimulation,
+    flags: &SimulationConfig,
 ) -> Result<Vec<CompareConfig>, Box<dyn Error>> {
     let zero = LatencyProfile::zero();
     // The non-zero placement preset used by the ladder / perception axis: the
     // CLI's --latency if given, else dublin (the research-sourced realistic one).
     let lat_name = flags.latency.as_deref().unwrap_or("dublin");
-    let lat =
-        build_latency(lat_name).ok_or_else(|| format!("unknown latency preset {lat_name:?}"))?;
+    let lat = latency_preset(lat_name)?;
 
     // Build a variant that reuses the base fill model and overrides the knobs.
-    let v = |preset: LatencyProfile, perception: bool, taker_delay: bool, fees: bool| ResolvedSim {
-        fill_name: base.fill_name.clone(),
-        queue: base.queue,
-        preset,
-        perception,
-        taker_delay,
-        fees,
+    let v = |preset: LatencyProfile, perception: bool, taker_delay: bool, fees: bool| {
+        ResolvedSimulation {
+            fill_model: base.fill_model,
+            category: base.category,
+            queue: base.queue,
+            preset,
+            perception,
+            taker_delay,
+            fees,
+        }
     };
 
     let matrix = match axis {
@@ -638,7 +610,7 @@ fn build_compare_matrix(
         "latency" => ["zero", "dublin", "retail-eu", "us-east"]
             .iter()
             .map(|n| {
-                let preset = build_latency(n).expect("known preset");
+                let preset = latency_preset(n).expect("known preset");
                 (
                     (*n).to_string(),
                     format!("latency {n} · taker-delay on · fees on"),
@@ -705,7 +677,7 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
     };
     // Only simulation flags here (plus --record/--report): resolutions and
     // categories live in the universe's per-market entries.
-    let mut sim_flags = SimFlags::default();
+    let mut sim_flags = SimulationConfig::default();
     let mut record_path = None;
     let mut report_path = None;
     while let Some(flag) = args.next() {
@@ -727,7 +699,7 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
     let universe = Universe::load(&path)?;
     // CLI flags override the universe's [simulation] section, which overrides
     // built-in defaults.
-    let resolved = resolve_simulation(&sim_flags, universe.simulation.as_ref())?;
+    let resolved = resolve(universe.simulation.as_ref(), &sim_flags)?;
 
     let mut results = Vec::new();
     // Only populated when reporting: each market reduced to its PnL curve +
@@ -741,7 +713,7 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
         // from this market's category — the universe layer doing its job.
         let engine = Engine::new(
             INITIAL_CAPITAL,
-            resolved.fill()?,
+            resolved.fill(),
             resolved.simulation(Some(entry.category)),
         );
         let result = if reporting {
@@ -810,22 +782,9 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-/// Simulation settings from the CLI, all optional — resolved against a
-/// universe's `[simulation]` section and built-in defaults by
-/// `resolve_simulation` (precedence: CLI > file > defaults).
-#[derive(Default)]
-struct SimFlags {
-    fill: Option<String>,
-    latency: Option<String>,
-    perception: Option<bool>,
-    taker_delay: Option<bool>,
-    fees: Option<bool>,
-    queue: Option<String>,
-}
-
 /// Try to consume one simulation flag. `Ok(true)` = it was one of ours.
 fn parse_sim_flag(
-    flags: &mut SimFlags,
+    flags: &mut SimulationConfig,
     flag: &str,
     args: &mut impl Iterator<Item = String>,
 ) -> Result<bool, Box<dyn Error>> {
@@ -903,88 +862,6 @@ fn parse_on_off(flag: &str, value: Option<String>) -> Result<bool, Box<dyn Error
     }
 }
 
-/// The effective simulation settings after precedence resolution. The fill
-/// model stays a *name* so batch can build a fresh instance per market.
-struct ResolvedSim {
-    fill_name: String,
-    queue: QueueModel,
-    preset: LatencyProfile,
-    perception: bool,
-    taker_delay: bool,
-    fees: bool,
-}
-
-impl ResolvedSim {
-    /// Compose the per-run engine options for a market of known (or absent)
-    /// category: preset + the exchange's hold and taker fee when their
-    /// toggles are on. Both are category-driven, so an absent category (a
-    /// bare `run` without `--category`) engages neither — the pre-latency,
-    /// fee-free behavior.
-    fn simulation(&self, category: Option<Category>) -> Simulation {
-        let taker = match (self.taker_delay, category) {
-            (true, Some(category)) => pmbt::latency::taker_delay(category),
-            _ => std::time::Duration::ZERO,
-        };
-        let fee_rate = match (self.fees, category) {
-            (true, Some(category)) => pmbt::fees::fee_rate(category),
-            _ => 0.0,
-        };
-        Simulation {
-            latency: self.preset.with_taker_delay(taker),
-            perception: self.perception,
-            fee_rate,
-            queue: self.queue,
-        }
-    }
-
-    fn fill(&self) -> Result<Box<dyn FillModel>, Box<dyn Error>> {
-        build_fill(&self.fill_name)
-            .ok_or_else(|| format!("unknown fill model {:?} (naive|sweep)", self.fill_name).into())
-    }
-}
-
-/// Precedence: CLI flag > universe `[simulation]` section > built-in default
-/// (fill naive, latency zero, perception off, taker delay on, fees on).
-fn resolve_simulation(
-    cli: &SimFlags,
-    file: Option<&SimulationConfig>,
-) -> Result<ResolvedSim, Box<dyn Error>> {
-    let empty = SimulationConfig::default();
-    let file = file.unwrap_or(&empty);
-
-    let latency_name = cli
-        .latency
-        .as_deref()
-        .or(file.latency.as_deref())
-        .unwrap_or("zero");
-    let preset = build_latency(latency_name).ok_or_else(|| {
-        format!("unknown latency preset {latency_name:?} (zero|dublin|retail-eu|us-east)")
-    })?;
-
-    let queue_name = cli
-        .queue
-        .as_deref()
-        .or(file.queue.as_deref())
-        .unwrap_or("proportional");
-    let queue = build_queue(queue_name).ok_or_else(|| {
-        format!("unknown queue model {queue_name:?} (front|proportional|trades-only)")
-    })?;
-
-    Ok(ResolvedSim {
-        queue,
-        fill_name: cli
-            .fill
-            .as_deref()
-            .or(file.fill.as_deref())
-            .unwrap_or("naive")
-            .to_string(),
-        preset,
-        perception: cli.perception.or(file.perception).unwrap_or(false),
-        taker_delay: cli.taker_delay.or(file.taker_delay).unwrap_or(true),
-        fees: cli.fees.or(file.fees).unwrap_or(true),
-    })
-}
-
 fn cmd_convert(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>> {
     let (Some(capture), Some(out_dir)) = (args.next(), args.next()) else {
         return Err(USAGE.into());
@@ -1028,4 +905,81 @@ fn cmd_convert(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
         println!("gaps: none detected");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod config_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn comparison_uses_explicit_latency_or_dublin_not_the_profile_preset() {
+        let profile = SimulationConfig {
+            latency: Some("us-east".into()),
+            fill: Some("sweep".into()),
+            queue: Some("trades-only".into()),
+            category: Some(Category::Sports),
+            ..Default::default()
+        };
+        for (override_name, expected) in [
+            (None, LatencyProfile::dublin()),
+            (Some("retail-eu"), LatencyProfile::retail_eu()),
+        ] {
+            let flags = SimulationConfig {
+                latency: override_name.map(str::to_owned),
+                ..Default::default()
+            };
+            let base = resolve(Some(&profile), &flags).unwrap();
+            if override_name.is_none() {
+                assert_eq!(base.preset, LatencyProfile::us_east());
+            }
+            for axis in ["realism", "perception"] {
+                let runs = build_compare_matrix(axis, &base, &flags).unwrap();
+                assert_eq!(runs.last().unwrap().2.preset, expected);
+                for (_, _, config) in &runs {
+                    assert_eq!(config.fill_model, base.fill_model);
+                    assert_eq!(config.queue, base.queue);
+                    assert_eq!(config.category, Some(Category::Sports));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn comparison_axes_preserve_their_existing_friction_settings() {
+        let flags = SimulationConfig::default();
+        let base = resolve(None, &flags).unwrap();
+        let realism = build_compare_matrix("realism", &base, &flags).unwrap();
+        let toggles: Vec<_> = realism
+            .iter()
+            .map(|(_, _, c)| (c.perception, c.taker_delay, c.fees))
+            .collect();
+        assert_eq!(
+            toggles,
+            vec![
+                (false, false, false),
+                (false, false, false),
+                (false, true, false),
+                (false, true, true),
+                (true, true, true)
+            ]
+        );
+        assert_eq!(realism[0].2.preset, LatencyProfile::zero());
+        let fees = build_compare_matrix("fees", &base, &flags).unwrap();
+        assert!(!fees[0].2.fees);
+        assert!(fees[1].2.fees);
+        assert!(fees
+            .iter()
+            .all(|(_, _, c)| c.preset == LatencyProfile::zero()));
+        let holds = build_compare_matrix("taker-delay", &base, &flags).unwrap();
+        assert!(!holds[0].2.taker_delay);
+        assert!(holds[1].2.taker_delay);
+        assert!(holds.iter().all(|(_, _, c)| !c.fees));
+        let latency = build_compare_matrix("latency", &base, &flags).unwrap();
+        assert_eq!(latency.len(), 4);
+        for (name, _, config) in latency {
+            assert_eq!(config.preset, latency_preset(&name).unwrap());
+            assert!(!config.perception);
+            assert!(config.fees && config.taker_delay);
+        }
+    }
 }
