@@ -13,6 +13,7 @@ pub mod buyandsell;
 #[path = "../strategies/quoter.rs"]
 pub mod quoter;
 
+pub mod backtest;
 pub mod clob;
 pub mod config;
 pub mod convert;
@@ -34,3 +35,9 @@ pub mod universe;
 
 #[cfg(test)]
 mod engine_regressions;
+
+// Common entry points for file-backed library runs.
+pub use backtest::{
+    ArtifactKind, Backtest, BacktestConfig, BacktestError, OutputConfig, RecordingMode,
+    RunArtifact, RunDiagnostic, RunOutcome, StrategyMetadata,
+};
