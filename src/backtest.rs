@@ -125,7 +125,7 @@ impl OutputConfig {
             RecordingMode::None
         }
     }
-    fn artifacts(&self) -> Vec<RunArtifact> {
+    pub(crate) fn artifacts(&self) -> Vec<RunArtifact> {
         [
             (ArtifactKind::Html, &self.html),
             (ArtifactKind::Json, &self.json),
@@ -209,7 +209,7 @@ pub enum BacktestError {
     },
 }
 impl BacktestError {
-    fn output(
+    pub(crate) fn output(
         kind: ArtifactKind,
         path: &Path,
         source: impl Into<Box<dyn std::error::Error>>,
@@ -257,44 +257,14 @@ impl Backtest {
     }
 
     pub fn run(self, strategy: &mut dyn Strategy) -> Result<RunOutcome, BacktestError> {
-        if !self.config.initial_capital.is_finite() || self.config.initial_capital <= 0.0 {
-            return Err(BacktestError::InvalidCapital(self.config.initial_capital));
-        }
-        if self.config.book_paths.is_empty() {
-            return Err(BacktestError::NoInputs);
-        }
         let overrides = SimulationConfig {
             category: self.config.category.or(self.overrides.category),
             ..self.overrides.clone()
         };
         let simulation = resolve(Some(&self.config.simulation), &overrides)?;
-        for path in &self.config.book_paths {
-            if !path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s.ends_with("_book_snapshot_full.parquet"))
-            {
-                return Err(BacktestError::InvalidBookPath(path.clone()));
-            }
-        }
-        let (feed, missing) =
-            FileFeed::from_book_paths(&self.config.book_paths).map_err(|source| {
-                BacktestError::Input {
-                    paths: self.config.book_paths.clone(),
-                    source,
-                }
-            })?;
+        let (feed, diagnostics) = open_input(&self.config)?;
         validate_outputs(&self.outputs)?;
-        let diagnostics = missing
-            .iter()
-            .map(|p| RunDiagnostic::MissingTradeTape {
-                book_path: p.clone(),
-            })
-            .collect();
-        let feed = SingleMarketFeed {
-            inner: feed,
-            market: None,
-        };
+        let missing_count = diagnostics.len();
         let engine = Engine::new(
             self.config.initial_capital,
             simulation.fill(),
@@ -339,7 +309,7 @@ impl Backtest {
                         .map_err(|e| BacktestError::output(ArtifactKind::Parquet, path, e))?;
                 }
                 if let Some(path) = &self.outputs.html {
-                    let context = self.report_context(&simulation, missing.len());
+                    let context = self.report_context(&simulation, missing_count);
                     let source = self
                         .config
                         .book_paths
@@ -460,7 +430,7 @@ impl Backtest {
 }
 
 // Keep the single-token assumption enforced without changing the reusable feed.
-struct SingleMarketFeed {
+pub(crate) struct SingleMarketFeed {
     inner: FileFeed,
     market: Option<MarketId>,
 }
@@ -486,7 +456,7 @@ impl EventSource for SingleMarketFeed {
     }
 }
 
-fn validate_outputs(outputs: &OutputConfig) -> Result<(), BacktestError> {
+pub(crate) fn validate_outputs(outputs: &OutputConfig) -> Result<(), BacktestError> {
     let mut destinations: Vec<PathBuf> = Vec::new();
     for artifact in outputs.artifacts() {
         let path = &artifact.path;
@@ -533,4 +503,41 @@ fn validate_outputs(outputs: &OutputConfig) -> Result<(), BacktestError> {
         }
     }
     Ok(())
+}
+
+/// Shared input checks for single runs and experiment workflows.
+pub(crate) fn open_input(
+    config: &BacktestConfig,
+) -> Result<(SingleMarketFeed, Vec<RunDiagnostic>), BacktestError> {
+    if !config.initial_capital.is_finite() || config.initial_capital <= 0.0 {
+        return Err(BacktestError::InvalidCapital(config.initial_capital));
+    }
+    if config.book_paths.is_empty() {
+        return Err(BacktestError::NoInputs);
+    }
+    for path in &config.book_paths {
+        if !path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.ends_with("_book_snapshot_full.parquet"))
+        {
+            return Err(BacktestError::InvalidBookPath(path.clone()));
+        }
+    }
+    let (feed, missing) =
+        FileFeed::from_book_paths(&config.book_paths).map_err(|source| BacktestError::Input {
+            paths: config.book_paths.clone(),
+            source,
+        })?;
+    let diagnostics = missing
+        .iter()
+        .map(|p| RunDiagnostic::MissingTradeTape {
+            book_path: p.clone(),
+        })
+        .collect();
+    let feed = SingleMarketFeed {
+        inner: feed,
+        market: None,
+    };
+    Ok((feed, diagnostics))
 }

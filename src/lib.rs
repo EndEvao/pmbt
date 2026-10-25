@@ -19,6 +19,7 @@ pub mod config;
 pub mod convert;
 pub mod domain;
 pub mod engine;
+pub mod experiments;
 pub mod feed;
 pub mod fees;
 pub mod fill;

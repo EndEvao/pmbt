@@ -6,23 +6,19 @@ use std::process;
 use pmbt::accumulator::Accumulator;
 use pmbt::buyandhold::BuyAndHold;
 use pmbt::buyandsell::BuyAndSell;
-use pmbt::config::{
-    latency_preset, resolve, ResolvedSimulation, SimulationConfig, SimulationProfile,
-};
+use pmbt::config::{resolve, SimulationConfig, SimulationProfile};
 use pmbt::convert::convert_capture;
 use pmbt::domain::order::TimeInForce;
 use pmbt::domain::types::Price;
-use pmbt::engine::{BacktestResult, Engine, Settlement};
-use pmbt::feed::{FileFeed, MergedFeed};
-use pmbt::latency::LatencyProfile;
-use pmbt::quoter::Quoter;
-use pmbt::report::{
-    self,
-    record::{RecorderConfig, TimeSeriesRecorder},
+use pmbt::engine::{BacktestResult, Settlement};
+use pmbt::experiments::{
+    comparison_matrix as build_compare_matrix, run_batch, run_comparison, BatchConfig,
+    ComparisonConfig, ExperimentOutputs,
 };
+use pmbt::quoter::Quoter;
 use pmbt::resting::QueueModel;
 use pmbt::strategy::Strategy;
-use pmbt::universe::{self, Category, Universe};
+use pmbt::universe::{Category, Universe};
 use pmbt::{
     ArtifactKind, Backtest, BacktestConfig, OutputConfig, RecordingMode, RunDiagnostic,
     StrategyMetadata,
@@ -432,177 +428,35 @@ fn cmd_compare(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
         );
     }
 
+    build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
     println!("comparing {} configs on axis {axis:?}:", configs.len());
-    let mut runs: Vec<report::compare::CompareRun> = Vec::with_capacity(configs.len());
-    for (label, detail, resolved) in &configs {
-        let (mut strategy, _) = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
-        let feed = open_feed(&[PathBuf::from(&path)])?;
-        let engine = Engine::new(
-            INITIAL_CAPITAL,
-            resolved.fill(),
-            resolved.simulation(category),
-        );
-        let mut recorder = TimeSeriesRecorder::new(RecorderConfig::default());
-        let result = engine.run_recorded(feed, strategy.as_mut(), resolution, &mut recorder)?;
+    let mut input = BacktestConfig::new(path);
+    input.initial_capital = INITIAL_CAPITAL;
+    input.resolution = resolution;
+    let outcome = run_comparison(
+        ComparisonConfig {
+            input,
+            variants: configs,
+            strategy_name: name.clone(),
+            ladder,
+            outputs: ExperimentOutputs {
+                html: report_path.map(PathBuf::from),
+                json: record_path.map(PathBuf::from),
+            },
+        },
+        || build(&name).expect("validated strategy").0,
+    )?;
+    print_diagnostics(&outcome.diagnostics);
+    for run in &outcome.runs {
         println!(
-            "  {label:<14} total_pnl {:+.2}  fills {}  fees {:.2}",
-            result.total_pnl, result.fills, result.fees
+            "  {:<14} total_pnl {:+.2}  fills {}  fees {:.2}",
+            run.label, run.result.total_pnl, run.result.fills, run.result.fees
         );
-        runs.push(report::compare::CompareRun::from_recorded(
-            label.clone(),
-            detail.clone(),
-            result,
-            &recorder,
-        ));
     }
-
-    let subtitle = Path::new(&path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
-    if let Some(out) = &record_path {
-        report::compare::write_json(
-            Path::new(out),
-            &name,
-            subtitle,
-            ladder,
-            category.is_some(),
-            &runs,
-        )?;
-        println!("recorded comparison to {out}");
-    }
-    if let Some(out) = &report_path {
-        report::compare::write_html(
-            Path::new(out),
-            &name,
-            subtitle,
-            ladder,
-            category.is_some(),
-            &runs,
-        )?;
-        println!("wrote comparison report to {out}");
+    for artifact in outcome.artifacts {
+        println!("wrote comparison to {}", artifact.path.display());
     }
     Ok(())
-}
-
-/// A single labelled config in a comparison matrix.
-type CompareConfig = (String, String, ResolvedSimulation);
-
-/// Build the config matrix for a comparison axis. The base carries the fill
-/// model (and any CLI-set fields); each config overrides the realism knobs.
-fn build_compare_matrix(
-    axis: &str,
-    base: &ResolvedSimulation,
-    flags: &SimulationConfig,
-) -> Result<Vec<CompareConfig>, Box<dyn Error>> {
-    let zero = LatencyProfile::zero();
-    // The non-zero placement preset used by the ladder / perception axis: the
-    // CLI's --latency if given, else dublin (the research-sourced realistic one).
-    let lat_name = flags.latency.as_deref().unwrap_or("dublin");
-    let lat = latency_preset(lat_name)?;
-
-    // Build a variant that reuses the base fill model and overrides the knobs.
-    let v = |preset: LatencyProfile, perception: bool, taker_delay: bool, fees: bool| {
-        ResolvedSimulation {
-            fill_model: base.fill_model,
-            category: base.category,
-            queue: base.queue,
-            preset,
-            perception,
-            taker_delay,
-            fees,
-        }
-    };
-
-    let matrix = match axis {
-        // Cumulative ladder: each rung adds exactly one friction, so consecutive
-        // total-PnL deltas attribute cost to that component.
-        "realism" => vec![
-            (
-                "frictionless".into(),
-                "latency zero · taker-delay off · fees off · perception off".into(),
-                v(zero, false, false, false),
-            ),
-            (
-                "+latency".into(),
-                format!("latency {lat_name} · taker-delay off · fees off"),
-                v(lat, false, false, false),
-            ),
-            (
-                "+taker-delay".into(),
-                format!("latency {lat_name} · taker-delay on · fees off"),
-                v(lat, false, true, false),
-            ),
-            (
-                "+fees".into(),
-                format!("latency {lat_name} · taker-delay on · fees on"),
-                v(lat, false, true, true),
-            ),
-            (
-                "+perception".into(),
-                format!("latency {lat_name} · taker-delay on · fees on · perception on"),
-                v(lat, true, true, true),
-            ),
-        ],
-        // Placement-latency sweep: only the preset varies; other frictions held.
-        "latency" => ["zero", "dublin", "retail-eu", "us-east"]
-            .iter()
-            .map(|n| {
-                let preset = latency_preset(n).expect("known preset");
-                (
-                    (*n).to_string(),
-                    format!("latency {n} · taker-delay on · fees on"),
-                    v(preset, false, true, true),
-                )
-            })
-            .collect(),
-        // A/B toggles: everything else constant, one knob flipped.
-        "fees" => vec![
-            (
-                "fees off".into(),
-                "latency zero · fees off".into(),
-                v(zero, false, true, false),
-            ),
-            (
-                "fees on".into(),
-                "latency zero · fees on".into(),
-                v(zero, false, true, true),
-            ),
-        ],
-        // Perception only bites when the feed component is non-zero, so this A/B
-        // runs on the dublin preset rather than zero.
-        "perception" => vec![
-            (
-                "perception off".into(),
-                format!("latency {lat_name} · perception off"),
-                v(lat, false, true, true),
-            ),
-            (
-                "perception on".into(),
-                format!("latency {lat_name} · perception on"),
-                v(lat, true, true, true),
-            ),
-        ],
-        "taker-delay" => vec![
-            (
-                "taker-delay off".into(),
-                "latency zero · taker-delay off".into(),
-                v(zero, false, false, false),
-            ),
-            (
-                "taker-delay on".into(),
-                "latency zero · taker-delay on".into(),
-                v(zero, false, true, false),
-            ),
-        ],
-        other => {
-            return Err(format!(
-                "unknown --axis {other:?} (realism|latency|fees|perception|taker-delay)"
-            )
-            .into())
-        }
-    };
-    Ok(matrix)
 }
 
 /// Run one engine per universe entry (fresh strategy + fill model each — both
@@ -632,70 +486,34 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
             other => return Err(format!("unknown argument {other:?}\n{USAGE}").into()),
         }
     }
-    let reporting = record_path.is_some() || report_path.is_some();
-
     let universe = Universe::load(&path)?;
-    // CLI flags override the universe's [simulation] section, which overrides
-    // built-in defaults.
-    let resolved = resolve(universe.simulation.as_ref(), &sim_flags)?;
-
-    let mut results = Vec::new();
-    // Only populated when reporting: each market reduced to its PnL curve +
-    // result, so a large universe holds curves, not full recorders.
-    let mut runs: Vec<report::batch::MarketRun> = Vec::new();
-    for entry in &universe.markets {
-        let (mut strategy, _) = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
-        let feed = open_feed(&entry.data_files(&universe.data_dir)?)?;
-
-        // The preset covers observer placement; the exchange's hold comes
-        // from this market's category — the universe layer doing its job.
-        let engine = Engine::new(
-            INITIAL_CAPITAL,
-            resolved.fill(),
-            resolved.simulation(Some(entry.category)),
-        );
-        let result = if reporting {
-            let mut recorder = TimeSeriesRecorder::new(RecorderConfig::default());
-            let result =
-                engine.run_recorded(feed, strategy.as_mut(), entry.resolution()?, &mut recorder)?;
-            runs.push(report::batch::MarketRun::from_recorded(
-                entry.market_id.clone(),
-                format!("{:?}", entry.category).to_lowercase(),
-                result.clone(),
-                &recorder,
-            ));
-            result
-        } else {
-            engine.run(feed, strategy.as_mut(), entry.resolution()?)?
-        };
-
-        let id = &entry.market_id;
-        let short = if id.len() > 12 {
-            format!("{}…{}", &id[..4], &id[id.len() - 4..])
-        } else {
-            id.clone()
-        };
-        let outcome = match &result.settlement {
-            Settlement::Settled { pnl, .. } => format!("settled {pnl:+.2}"),
-            Settlement::Unresolved => "unresolved".to_string(),
-            Settlement::NothingHeld => "nothing held".to_string(),
-        };
+    let universe_name = universe.name.clone();
+    build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
+    let outcome = run_batch(
+        BatchConfig {
+            universe,
+            overrides: sim_flags,
+            initial_capital: INITIAL_CAPITAL,
+            outputs: ExperimentOutputs {
+                html: report_path.map(PathBuf::from),
+                json: record_path.map(PathBuf::from),
+            },
+        },
+        |_| build(&name).expect("validated strategy").0,
+    )?;
+    print_diagnostics(&outcome.diagnostics);
+    for run in &outcome.runs {
         println!(
-            "  {short}  {:<8}  total {:+10.2}  fills {:>6}  rej {:>6}  {outcome}",
-            format!("{:?}", entry.category).to_lowercase(),
-            result.total_pnl,
-            result.fills,
-            result.rejections,
+            "  {}  {:<8}  total {:+10.2}  fills {:>6}  rej {:>6}",
+            run.id, run.category, run.result.total_pnl, run.result.fills, run.result.rejections
         );
-        results.push((entry.market_id.clone(), result));
     }
-
-    let agg = universe::aggregate(&results);
+    let agg = &outcome.aggregate;
     println!(
         "universe {:?}: {} markets\n  \
          total_pnl {:+.2} (realized {:+.2}, settlement {:+.2}, fees {:.2})\n  \
          fills {}  rejections {}  settled {}  unresolved {}  nothing_held {}",
-        universe.name,
+        universe_name,
         agg.markets,
         agg.total_pnl,
         agg.realized_pnl,
@@ -708,14 +526,8 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
         agg.nothing_held,
     );
 
-    // Batch outputs: the combined cumulative curve + per-market attribution.
-    if let Some(out) = &record_path {
-        report::batch::write_json(Path::new(out), &universe.name, &runs)?;
-        println!("recorded batch to {out}");
-    }
-    if let Some(out) = &report_path {
-        report::batch::write_html(Path::new(out), &universe.name, &runs)?;
-        println!("wrote batch report to {out}");
+    for artifact in outcome.artifacts {
+        println!("wrote batch to {}", artifact.path.display());
     }
     Ok(())
 }
@@ -751,26 +563,6 @@ fn parse_sim_flag(
         _ => return Ok(false),
     }
     Ok(true)
-}
-
-/// Open one or more of a market's consecutive book files — chained into one
-/// continuous feed — together with each day's sibling trades tape.
-///
-/// A single path is the ordinary one-day backtest (a chain of one). A missing
-/// tape is not fatal: the book replays fine without it, and only resting (maker)
-/// orders need trades to fill. So we warn per missing day and carry on rather
-/// than refusing a marketable backtest over a book with no tape beside it. A
-/// malformed tape still fails loudly.
-fn open_feed(book_paths: &[PathBuf]) -> Result<FileFeed, Box<dyn Error>> {
-    let (feed, missing_tapes) = MergedFeed::from_book_paths(book_paths)?;
-    for book_path in &missing_tapes {
-        println!(
-            "note: no trades file beside {} — replaying the book only \
-             (resting orders cannot fill without a tape)",
-            book_path.display()
-        );
-    }
-    Ok(feed)
 }
 
 /// Load a `--config` simulation profile, if one was given. Any TOML with a
@@ -848,6 +640,8 @@ fn cmd_convert(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
 #[cfg(test)]
 mod config_compatibility_tests {
     use super::*;
+    use pmbt::config::latency_preset;
+    use pmbt::latency::LatencyProfile;
 
     #[test]
     fn comparison_uses_explicit_latency_or_dublin_not_the_profile_preset() {
