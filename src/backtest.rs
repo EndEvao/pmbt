@@ -84,6 +84,22 @@ impl Default for StrategyMetadata {
     }
 }
 
+/// Caller-supplied source identity. `None` means unknown, never implicitly clean.
+/// The library does not run Git or infer a repository from the working directory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceRevision {
+    pub revision: Option<String>,
+    pub dirty: Option<bool>,
+}
+
+/// Optional source metadata for the engine and the caller's research application.
+/// Callers determine whether these describe build-time or run-time source state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunProvenance {
+    pub engine: SourceRevision,
+    pub research: SourceRevision,
+}
+
 /// Optional outputs. No outputs means no history is retained. Parquet alone
 /// streams; requesting HTML or JSON buffers history for all requested outputs.
 ///
@@ -172,6 +188,7 @@ pub struct RunOutcome {
     /// Resolved settings including the effective market category.
     pub simulation: ResolvedSimulation,
     pub strategy: StrategyMetadata,
+    pub provenance: Option<RunProvenance>,
     pub diagnostics: Vec<RunDiagnostic>,
     pub artifacts: Vec<RunArtifact>,
     pub recording: RecordingMode,
@@ -230,6 +247,7 @@ pub struct Backtest {
     outputs: OutputConfig,
     metadata: StrategyMetadata,
     overrides: SimulationConfig,
+    provenance: Option<RunProvenance>,
 }
 impl Backtest {
     pub fn new(config: BacktestConfig) -> Self {
@@ -238,6 +256,7 @@ impl Backtest {
             outputs: OutputConfig::default(),
             metadata: StrategyMetadata::default(),
             overrides: SimulationConfig::default(),
+            provenance: None,
         }
     }
     pub fn outputs(mut self, outputs: OutputConfig) -> Self {
@@ -253,6 +272,13 @@ impl Backtest {
     /// The config's per-market category still takes precedence.
     pub fn overrides(mut self, overrides: SimulationConfig) -> Self {
         self.overrides = overrides;
+        self
+    }
+
+    /// Attach caller-supplied provenance to the outcome and HTML settings.
+    /// JSON and Parquet retain their existing numerical-report schema.
+    pub fn provenance(mut self, provenance: RunProvenance) -> Self {
+        self.provenance = Some(provenance);
         self
     }
 
@@ -336,6 +362,7 @@ impl Backtest {
             config: self.config,
             simulation,
             strategy: self.metadata,
+            provenance: self.provenance,
             diagnostics,
             artifacts: self.outputs.artifacts(),
             recording,
@@ -406,6 +433,24 @@ impl Backtest {
             ),
             ("Engine version".into(), env!("CARGO_PKG_VERSION").into()),
         ];
+        if let Some(provenance) = &self.provenance {
+            for (label, source) in [
+                ("Engine", &provenance.engine),
+                ("Research", &provenance.research),
+            ] {
+                settings.push((
+                    format!("{label} revision"),
+                    source.revision.clone().unwrap_or_else(|| "unknown".into()),
+                ));
+                settings.push((
+                    format!("{label} dirty"),
+                    source
+                        .dirty
+                        .map_or("unknown", |dirty| if dirty { "true" } else { "false" })
+                        .into(),
+                ));
+            }
+        }
         settings.extend(
             self.metadata
                 .parameters

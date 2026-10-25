@@ -444,3 +444,66 @@ fn writer_failure_after_simulation_returns_output_error() {
         assert!(!path.exists());
     }
 }
+
+#[test]
+fn supplied_provenance_reaches_outcome_and_report_without_being_inferred() {
+    use pmbt::{RunProvenance, SourceRevision};
+    for dirty in [None, Some(false), Some(true)] {
+        let dir = TestDir::new();
+        let provenance = RunProvenance {
+            engine: SourceRevision {
+                revision: Some("engine-revision".into()),
+                dirty,
+            },
+            research: SourceRevision {
+                revision: Some("private </script> revision".into()),
+                dirty: None,
+            },
+        };
+        let outcome = Backtest::new(fixture(&dir))
+            .provenance(provenance.clone())
+            .outputs(OutputConfig::html(dir.path("report.html")))
+            .run(&mut PrivateStrategy::default())
+            .unwrap();
+        assert_eq!(outcome.provenance, Some(provenance));
+        let data = html_data(&dir.path("report.html"));
+        let settings = data["context"]["settings"].as_array().unwrap();
+        assert!(settings.contains(&serde_json::json!(["Engine revision", "engine-revision"])));
+        assert!(settings.contains(&serde_json::json!([
+            "Engine dirty",
+            match dirty {
+                None => "unknown",
+                Some(false) => "false",
+                Some(true) => "true",
+            }
+        ])));
+        assert!(settings.contains(&serde_json::json!([
+            "Research revision",
+            "private </script> revision"
+        ])));
+        assert!(settings.contains(&serde_json::json!(["Research dirty", "unknown"])));
+        assert_eq!(
+            outcome.simulation,
+            pmbt::config::resolve(
+                Some(&outcome.config.simulation),
+                &SimulationConfig::default()
+            )
+            .unwrap()
+        );
+    }
+    let dir = TestDir::new();
+    let plain = Backtest::new(fixture(&dir))
+        .run(&mut PrivateStrategy::default())
+        .unwrap();
+    assert_eq!(plain.provenance, None);
+    let unknown = Backtest::new(fixture(&dir))
+        .provenance(RunProvenance::default())
+        .outputs(OutputConfig::html(dir.path("unknown.html")))
+        .run(&mut PrivateStrategy::default())
+        .unwrap();
+    assert_eq!(unknown.provenance, Some(RunProvenance::default()));
+    assert!(html_data(&dir.path("unknown.html"))["context"]["settings"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!(["Engine revision", "unknown"])));
+}

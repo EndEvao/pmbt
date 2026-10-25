@@ -171,3 +171,18 @@ lockfile does not pin the sibling checkout's Git revision. Save revision and
 working-tree state with experiment results; a clean revision alone also does
 not identify external data or runtime settings. Keep datasets, secrets, and
 generated reports out of both source histories.
+
+## Run provenance
+
+Attach `RunProvenance { engine: SourceRevision { revision, dirty }, research: ... }`
+with `Backtest::provenance`. Both fields inside `SourceRevision` are optional;
+missing values are rendered as `unknown`, not inferred as clean. The library
+never runs Git. Supplied values are returned in `RunOutcome.provenance` and
+included in HTML report settings with the engine package version. JSON and
+Parquet retain their numerical-report schemas; save a separate manifest if you
+need provenance alongside those exports alone.
+
+Specify whether your application collects build-time or run-time checkout
+state. A run-time Git revision does not prove that an already-built binary came
+from that exact tree. For strict reproducibility, build from clean pinned
+sources and archive the configuration and data identifiers as well.

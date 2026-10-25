@@ -40,5 +40,5 @@ mod engine_regressions;
 // Common entry points for file-backed library runs.
 pub use backtest::{
     ArtifactKind, Backtest, BacktestConfig, BacktestError, OutputConfig, RecordingMode,
-    RunArtifact, RunDiagnostic, RunOutcome, StrategyMetadata,
+    RunArtifact, RunDiagnostic, RunOutcome, RunProvenance, SourceRevision, StrategyMetadata,
 };
