@@ -23,6 +23,10 @@ use pmbt::report::{
 use pmbt::resting::QueueModel;
 use pmbt::strategy::Strategy;
 use pmbt::universe::{self, Category, Universe};
+use pmbt::{
+    ArtifactKind, Backtest, BacktestConfig, OutputConfig, RecordingMode, RunDiagnostic,
+    StrategyMetadata,
+};
 
 const INITIAL_CAPITAL: f64 = 10_000.0;
 
@@ -77,25 +81,36 @@ const USAGE: &str = "usage:
       convert a raw websocket capture to Telonex parquet";
 
 /// The strategy registry: adding a strategy is one new arm.
-fn build(name: &str) -> Option<Box<dyn Strategy>> {
-    match name {
-        "buyandhold" => Some(Box::new(BuyAndHold::new(100.0))),
-        "buyandsell" => Some(Box::new(BuyAndSell::new(100.0))),
-        // Patient GTD maker: one bid at the touch, retired by the exchange
-        // after the shortest life GTD allows (120 s), then re-placed.
-        "accumulator" => Some(Box::new(Accumulator::new(
-            100.0,
-            0,
-            TimeInForce::GTD_MIN_LIFE_US,
-            500.0,
-        ))),
-        // Two-sided maker: joins the touch, 100 shares a side, capped at 500.
-        "quoter" => Some(Box::new(Quoter::new(100.0, 0, 500.0))),
-        // The same quoter stepping INSIDE the spread when there is room — the
-        // placement whose front-of-queue assumption is actually defensible.
-        "quoter-improve" => Some(Box::new(Quoter::new(100.0, -1, 500.0))),
-        _ => None,
+fn build(name: &str) -> Option<(Box<dyn Strategy>, StrategyMetadata)> {
+    let size = 100.0;
+    let cap = 500.0;
+    let offset = if name == "quoter-improve" { -1 } else { 0 };
+    let lifetime = TimeInForce::GTD_MIN_LIFE_US;
+    let strategy: Box<dyn Strategy> = match name {
+        "buyandhold" => Box::new(BuyAndHold::new(size)),
+        "buyandsell" => Box::new(BuyAndSell::new(size)),
+        "accumulator" => Box::new(Accumulator::new(size, offset, lifetime, cap)),
+        "quoter" | "quoter-improve" => Box::new(Quoter::new(size, offset, cap)),
+        _ => return None,
+    };
+    let mut metadata = StrategyMetadata::new(name);
+    metadata
+        .parameters
+        .push(("Order size".into(), format!("{size} shares")));
+    if matches!(name, "quoter" | "quoter-improve" | "accumulator") {
+        metadata
+            .parameters
+            .push(("Inventory cap".into(), format!("{cap} shares")));
+        metadata
+            .parameters
+            .push(("Offset ticks".into(), offset.to_string()));
     }
+    if name == "accumulator" {
+        metadata
+            .parameters
+            .push(("GTD lifetime".into(), format!("{lifetime} us")));
+    }
+    Some((strategy, metadata))
 }
 
 /// Category names for the run verb's `--category` flag (batch reads
@@ -200,130 +215,53 @@ fn cmd_run(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error>>
     // the same precedence `batch` applies to a universe's [simulation].
     let profile = load_profile(config_path.as_ref())?;
     sim_flags.category = category;
-    let resolved = resolve(profile.simulation.as_ref(), &sim_flags)?;
-    let category = resolved.category;
-
-    let mut strategy = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
-    // One Telonex file is one token's book, so the file choice *is* the
-    // outcome choice — no outcome argument.
-    let feed = open_feed(&[PathBuf::from(&path)])?;
-
-    let engine = Engine::new(
-        INITIAL_CAPITAL,
-        resolved.fill(),
-        resolved.simulation(category),
-    );
-
-    // Record the full time series only when an output (JSON and/or HTML) was
-    // asked for — a plain run stays on the no-op path and pays nothing.
-    let result = if let Some(out) = record_dir
-        .as_ref()
-        .filter(|_| record_path.is_none() && report_path.is_none())
-    {
-        let mut recorder =
-            report::stream::ParquetRecorder::new(Path::new(out), RecorderConfig::default())?;
-        let result = engine.run_recorded(feed, strategy.as_mut(), resolution, &mut recorder)?;
-        let samples = recorder.finish(&result)?;
-        println!("streamed {samples} samples + fills/blotter/depth/orders parquet to {out}/");
-        result
-    } else if record_path.is_some() || report_path.is_some() || record_dir.is_some() {
-        let mut recorder = TimeSeriesRecorder::new(RecorderConfig::default());
-        let result = engine.run_recorded(feed, strategy.as_mut(), resolution, &mut recorder)?;
-        if let Some(out) = &record_path {
-            report::write_json(Path::new(out), &result, &recorder)?;
-            println!("recorded {} samples to {out}", recorder.samples().len());
+    let (mut strategy, metadata) =
+        build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
+    let mut config = BacktestConfig::new(path);
+    config.initial_capital = INITIAL_CAPITAL;
+    config.simulation = profile.simulation.unwrap_or_default();
+    config.resolution = resolution;
+    config.market_name = market_name;
+    config.outcome = outcome;
+    let outcome = Backtest::new(config)
+        .overrides(sim_flags)
+        .metadata(metadata)
+        .outputs(OutputConfig {
+            html: report_path.map(PathBuf::from),
+            json: record_path.map(PathBuf::from),
+            parquet: record_dir.map(PathBuf::from),
+        })
+        .run(strategy.as_mut())?;
+    print_diagnostics(&outcome.diagnostics);
+    for artifact in &outcome.artifacts {
+        let out = artifact.path.display();
+        let samples = outcome.recorded_samples.unwrap_or(0);
+        match artifact.kind {
+            ArtifactKind::Html => println!("wrote report to {out}"),
+            ArtifactKind::Json => println!("recorded {samples} samples to {out}"),
+            ArtifactKind::Parquet => {
+                let verb = if outcome.recording == RecordingMode::StreamingParquet {
+                    "streamed"
+                } else {
+                    "wrote"
+                };
+                println!("{verb} {samples} samples + fills/blotter/depth/orders parquet to {out}/");
+            }
         }
-        if let Some(out) = &record_dir {
-            report::parquet::write_run(Path::new(out), &result, &recorder)?;
-            println!(
-                "wrote {} samples + fills/blotter/depth parquet to {out}/",
-                recorder.samples().len()
-            );
-        }
-        if let Some(out) = &report_path {
-            // Subtitle is the source file's name — the market the report is of.
-            let subtitle = Path::new(&path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            let sim = resolved.simulation(category);
-            let queue = match sim.queue {
-                QueueModel::Front => "front",
-                QueueModel::Proportional => "proportional",
-                QueueModel::TradesOnly => "trades-only",
-            };
-            let context = report::html::ReportContext {
-                market_name: market_name.clone(),
-                outcome: outcome.clone(),
-                queue: Some(queue.into()),
-                tape_present: Path::new(&path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .and_then(|n| n.strip_suffix("_book_snapshot_full.parquet"))
-                    .map(|stem| {
-                        Path::new(&path)
-                            .with_file_name(format!("{stem}_trades.parquet"))
-                            .is_file()
-                    }),
-                settings: vec![
-                    ("Fill model".into(), resolved.fill_model.name().into()),
-                    ("Queue model".into(), queue.into()),
-                    (
-                        "Feed delay".into(),
-                        format!("{} ms", sim.latency.feed.as_secs_f64() * 1000.0),
-                    ),
-                    (
-                        "Order transit".into(),
-                        format!("{} ms", sim.latency.transit.as_secs_f64() * 1000.0),
-                    ),
-                    (
-                        "Taker hold".into(),
-                        format!("{} ms", sim.latency.taker_delay.as_secs_f64() * 1000.0),
-                    ),
-                    (
-                        "Perception delay".into(),
-                        if sim.perception { "on" } else { "off" }.into(),
-                    ),
-                    ("Taker fee coefficient".into(), sim.fee_rate.to_string()),
-                    (
-                        "Category".into(),
-                        category.map_or("unspecified".into(), |c| format!("{c:?}").to_lowercase()),
-                    ),
-                    (
-                        "Resolution supplied".into(),
-                        resolution.map_or("unresolved".into(), |p| p.to_decimal_string()),
-                    ),
-                    ("Order size".into(), "100 shares".into()),
-                    (
-                        "Inventory cap".into(),
-                        if matches!(name.as_str(), "quoter" | "quoter-improve" | "accumulator") {
-                            "500 shares"
-                        } else {
-                            "not configured"
-                        }
-                        .into(),
-                    ),
-                    ("Engine version".into(), env!("CARGO_PKG_VERSION").into()),
-                ],
-            };
-            report::html::write_html_with_context(
-                Path::new(out),
-                &name,
-                subtitle,
-                &result,
-                &recorder,
-                resolution.map(|p| p.as_f64()),
-                &context,
-            )?;
-            println!("wrote report to {out}");
-        }
-        result
-    } else {
-        engine.run(feed, strategy.as_mut(), resolution)?
-    };
-
-    print_result(&name, &result, resolved.queue);
+    }
+    print_result(&name, &outcome.result, outcome.simulation.queue);
     Ok(())
+}
+
+fn print_diagnostics(diagnostics: &[RunDiagnostic]) {
+    for diagnostic in diagnostics {
+        match diagnostic {
+            RunDiagnostic::MissingTradeTape { book_path } => println!(
+                "note: no trades file beside {} — replaying the book only (resting orders cannot fill without a tape)",
+                book_path.display()
+            ),
+        }
+    }
 }
 
 /// A run's outcome, formatted for a human: money as money, the P&L broken into
@@ -497,7 +435,7 @@ fn cmd_compare(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Err
     println!("comparing {} configs on axis {axis:?}:", configs.len());
     let mut runs: Vec<report::compare::CompareRun> = Vec::with_capacity(configs.len());
     for (label, detail, resolved) in &configs {
-        let mut strategy = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
+        let (mut strategy, _) = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
         let feed = open_feed(&[PathBuf::from(&path)])?;
         let engine = Engine::new(
             INITIAL_CAPITAL,
@@ -706,7 +644,7 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
     // result, so a large universe holds curves, not full recorders.
     let mut runs: Vec<report::batch::MarketRun> = Vec::new();
     for entry in &universe.markets {
-        let mut strategy = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
+        let (mut strategy, _) = build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
         let feed = open_feed(&entry.data_files(&universe.data_dir)?)?;
 
         // The preset covers observer placement; the exchange's hold comes

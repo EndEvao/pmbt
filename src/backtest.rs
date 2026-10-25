@@ -229,6 +229,7 @@ pub struct Backtest {
     config: BacktestConfig,
     outputs: OutputConfig,
     metadata: StrategyMetadata,
+    overrides: SimulationConfig,
 }
 impl Backtest {
     pub fn new(config: BacktestConfig) -> Self {
@@ -236,6 +237,7 @@ impl Backtest {
             config,
             outputs: OutputConfig::default(),
             metadata: StrategyMetadata::default(),
+            overrides: SimulationConfig::default(),
         }
     }
     pub fn outputs(mut self, outputs: OutputConfig) -> Self {
@@ -247,6 +249,13 @@ impl Backtest {
         self
     }
 
+    /// Explicit settings override the profile in `BacktestConfig::simulation`.
+    /// The config's per-market category still takes precedence.
+    pub fn overrides(mut self, overrides: SimulationConfig) -> Self {
+        self.overrides = overrides;
+        self
+    }
+
     pub fn run(self, strategy: &mut dyn Strategy) -> Result<RunOutcome, BacktestError> {
         if !self.config.initial_capital.is_finite() || self.config.initial_capital <= 0.0 {
             return Err(BacktestError::InvalidCapital(self.config.initial_capital));
@@ -254,6 +263,11 @@ impl Backtest {
         if self.config.book_paths.is_empty() {
             return Err(BacktestError::NoInputs);
         }
+        let overrides = SimulationConfig {
+            category: self.config.category.or(self.overrides.category),
+            ..self.overrides.clone()
+        };
+        let simulation = resolve(Some(&self.config.simulation), &overrides)?;
         for path in &self.config.book_paths {
             if !path
                 .file_name()
@@ -263,11 +277,6 @@ impl Backtest {
                 return Err(BacktestError::InvalidBookPath(path.clone()));
             }
         }
-        let overrides = SimulationConfig {
-            category: self.config.category,
-            ..Default::default()
-        };
-        let simulation = resolve(Some(&self.config.simulation), &overrides)?;
         let (feed, missing) =
             FileFeed::from_book_paths(&self.config.book_paths).map_err(|source| {
                 BacktestError::Input {
