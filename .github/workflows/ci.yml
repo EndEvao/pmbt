@@ -15,6 +15,14 @@ jobs:
         run: cargo +stable fmt --check
       - name: Lint
         run: cargo +stable clippy --locked --all-targets -- -D warnings
+      - name: Library examples
+        run: cargo +stable check --locked --examples
+      - name: Documentation examples
+        run: cargo +stable test --locked --doc
+      - name: API documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +stable doc --locked --no-deps
       - name: Debug tests
         run: cargo +stable test --locked
       - name: Release tests

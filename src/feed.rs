@@ -86,7 +86,7 @@ pub trait EventSource {
     /// silently: appointments stop firing and orders stop executing, with no
     /// error anywhere. Implementations assert it.
     ///
-    /// The contract, as five rules, all checked by [`conformance`] — prose
+    /// The contract, as five rules, all checked by the `conformance` test module — prose
     /// alone already let two implementations disagree once, see rule 4.
     ///
     /// 1. With `deadline: None` and no appointment of your own, emit the next

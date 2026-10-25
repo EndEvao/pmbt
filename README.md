@@ -213,6 +213,17 @@ The honest caveats, stated rather than buried:
 
 ---
 
+## Library use
+
+Keep private strategies in a separate Rust application with `pmbt = { path = "../pmbt" }`.
+`Backtest` accepts your strategy directly and handles inputs, simulation settings,
+HTML/JSON/Parquet recording, diagnostics, and errors. `experiments` exposes batch
+and comparison workflows with fresh-strategy factories.
+
+See the [library guide](docs/library.md) and [custom strategy example](examples/library_usage.rs).
+The CLI uses the same library workflows. Output files must be new; Parquet output
+directories must be absent or empty, with existing parent directories.
+
 ## Usage
 
 ```bash
@@ -221,19 +232,19 @@ cargo run -- run <strategy> <book_snapshot_full.parquet> [--resolution 0|1] [--f
                  [--latency zero|dublin|retail-eu|us-east] [--category <cat>] [--queue proportional|front|trades-only]
 
 # a maker strategy with the exchange's friction and an HTML report
-cargo run -- run quoter <book.parquet> --resolution 1 --fill sweep --category sports --latency dublin --market-name "Market question" --outcome "Yes" --report out.html
+cargo run -- run quoter <token_book_snapshot_full.parquet> --resolution 1 --fill sweep --category sports --latency dublin --market-name "Market question" --outcome "Yes" --report out.html
 
 # keep the realism settings in a TOML profile (CLI flags still override)
-cargo run -- run <strategy> <book.parquet> --config universes/single.toml
+cargo run -- run <strategy> <token_book_snapshot_full.parquet> --config universes/single.toml
 
 # a whole universe of markets, aggregated
 cargo run -- batch <strategy> universes/example.toml --fill sweep --report batch.html
 
 # compare one strategy across a matrix of configs (the realism cost ladder)
-cargo run -- compare <strategy> <book.parquet> --category <cat> --report cmp.html
+cargo run -- compare <strategy> <token_book_snapshot_full.parquet> --category <cat> --report cmp.html
 
 # export the run as Parquet tables for pandas (see scripts/load_run.py)
-cargo run -- run quoter <book.parquet> --record-dir runs/quoter/
+cargo run -- run quoter <token_book_snapshot_full.parquet> --record-dir runs/quoter/
 
 # convert a raw websocket capture into per-asset Telonex-parity parquet (book + trades)
 cargo run -- convert <capture.jsonl> <out_dir>

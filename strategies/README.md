@@ -23,7 +23,19 @@ read-only.
 | [`quoter.rs`](quoter.rs) | `quoter`, `quoter-improve` | A two-sided **maker**: rests limit orders around the touch (join, or step inside the spread), cancels and re-quotes on a reprice, and caps inventory while counting orders still in flight. Exercises limit orders, cancels, and the queue model. |
 | [`accumulator.rs`](accumulator.rs) | `accumulator` | A patient GTD maker: rests one bid and lets the exchange retire it on its timer, replacing it via the `on_time` hook. Exercises GTD, time-driven decisions, and strategy-requested wake-ups. |
 
-## Adding your own
+## Private strategies in another project
+
+Implement `pmbt::strategy::Strategy` in your own crate and pass an instance to
+`Backtest::run`, or a factory to the batch/comparison APIs. No registration in
+this folder, `src/lib.rs`, or the CLI is needed. Read snapshots through public
+accessors such as `market_id()`, `timestamp()`, `ask().map(|level| level.price())`,
+and `bids()`. Keep strategy parameters in your application's configuration and
+pass display values through `StrategyMetadata`.
+
+See the [library guide](../docs/library.md) and
+[external-style example](../examples/library_usage.rs).
+
+## Adding a bundled CLI example
 
 1. Drop a new `<name>.rs` in this folder implementing `Strategy` (see
    `buyandhold.rs` for the minimal shape).

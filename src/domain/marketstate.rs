@@ -11,6 +11,17 @@ pub struct Level {
     pub(crate) size: f64,
 }
 
+impl Level {
+    /// Price at this level.
+    pub fn price(&self) -> Price {
+        self.price
+    }
+    /// Displayed quantity at this level.
+    pub fn size(&self) -> f64 {
+        self.size
+    }
+}
+
 /// A validated snapshot of one market's order book at an instant.
 ///
 /// The ladders are best-first — bids strictly descending, asks strictly
@@ -42,6 +53,15 @@ pub struct MarketState {
 }
 
 impl MarketState {
+    /// The token whose book this snapshot describes.
+    pub fn market_id(&self) -> &MarketId {
+        &self.market_id
+    }
+    /// Exchange time in microseconds (the delivered view under perception delay).
+    pub fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
     /// Validate a book into existence: each side strictly sorted best-first.
     /// Empty sides pass — they are vacuously sorted.
     pub fn new(
