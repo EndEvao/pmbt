@@ -1,7 +1,7 @@
-use crate::domain::marketstate::MarketState;
-use crate::domain::order::{OrderRequest, OrderSide, TimeInForce};
-use crate::portfolio::Portfolio;
-use crate::strategy::{Action, OpenOrder, Strategy};
+use pmbt::domain::marketstate::MarketState;
+use pmbt::domain::order::{OrderRequest, OrderSide, TimeInForce};
+use pmbt::portfolio::Portfolio;
+use pmbt::strategy::{Action, OpenOrder, Strategy};
 
 /// Buys `size` shares on the very first snapshot, then holds forever.
 ///
@@ -31,7 +31,7 @@ impl Strategy for BuyAndHold {
         }
         self.done = true;
         vec![Action::Place(OrderRequest::market(
-            state.market_id.clone(),
+            state.market_id().clone(),
             OrderSide::Buy,
             self.size,
             TimeInForce::Fok,

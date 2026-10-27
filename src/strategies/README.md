@@ -1,11 +1,8 @@
 # strategies
 
-Example strategies that plug into the `pmbt` engine. They live here — one level
-up from `src/` — because they are a distinct layer built *on* the engine, not
-part of its internals. Each is a single file implementing the `Strategy` trait
-from [`src/strategy.rs`](../src/strategy.rs); the engine compiles them in via
-`#[path]` declarations in [`src/lib.rs`](../src/lib.rs), so their module names
-are unchanged (`crate::quoter::Quoter`, …).
+These demonstrations belong to the CLI binary and use only pmbt's public API.
+They are not exported by the engine library. Each implements the `Strategy`
+trait from [`src/strategy.rs`](../strategy.rs).
 
 A strategy is a **pure decider**. It reacts to the market (`on_market_state`) or
 to time passing (`on_time`), folds what it sees into its own `&mut self` state,
@@ -32,16 +29,15 @@ accessors such as `market_id()`, `timestamp()`, `ask().map(|level| level.price()
 and `bids()`. Keep strategy parameters in your application's configuration and
 pass display values through `StrategyMetadata`.
 
-See the [library guide](../docs/library.md) and
-[external-style example](../examples/library_usage.rs).
+See the [library guide](../../docs/library.md) and
+[external-style example](../../examples/library_usage.rs).
 
 ## Adding a bundled CLI example
 
 1. Drop a new `<name>.rs` in this folder implementing `Strategy` (see
    `buyandhold.rs` for the minimal shape).
-2. Add `#[path = "../strategies/<name>.rs"] pub mod <name>;` in
-   [`src/lib.rs`](../src/lib.rs).
-3. Add one match arm in `build()` in [`src/main.rs`](../src/main.rs).
+2. Declare the module in [`mod.rs`](mod.rs).
+3. Add one match arm in `build()` in [`src/main.rs`](../main.rs).
 
 Fill models and queue models are separate seams (`src/fill/`, `src/resting.rs`);
 a strategy only decides *what* to ask for, never *how* it fills.

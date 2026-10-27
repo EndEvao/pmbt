@@ -8,7 +8,15 @@
 //! use pmbt::{Backtest, BacktestConfig, OutputConfig, StrategyMetadata};
 //! let mut config = BacktestConfig::new("data/token_book_snapshot_full.parquet");
 //! config.simulation.fill = Some("sweep".into());
-//! let mut strategy = pmbt::buyandhold::BuyAndHold::new(25.0);
+//! use pmbt::{strategy::{Strategy, Action, OpenOrder},
+//!     domain::marketstate::MarketState, portfolio::Portfolio};
+//! struct Observe;
+//! impl Strategy for Observe {
+//!     fn on_market_state(&mut self, _: &MarketState, _: &Portfolio, _: &[OpenOrder]) -> Vec<Action> {
+//!         vec![]
+//!     }
+//! }
+//! let mut strategy = Observe;
 //! let outcome = Backtest::new(config)
 //!     .metadata(StrategyMetadata::new("My strategy"))
 //!     .outputs(OutputConfig::html("report.html"))

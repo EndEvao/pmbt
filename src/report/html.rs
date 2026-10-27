@@ -382,7 +382,7 @@ mod tests {
         let result = Engine::new(10_000.0, Box::new(NaiveFillModel), Simulation::zero())
             .run_recorded(
                 feed,
-                &mut crate::buyandhold::BuyAndHold::new(100.0),
+                &mut crate::test_support::BuyOnce::new(100.0),
                 Some(Price::from_probability(1.0).unwrap()),
                 &mut recorder,
             )
@@ -405,7 +405,7 @@ mod tests {
         Engine::new(10_000.0, Box::new(NaiveFillModel), Simulation::zero())
             .run(
                 io::fixture(Vec::<MarketState>::new()),
-                &mut crate::buyandhold::BuyAndHold::new(100.0),
+                &mut crate::test_support::BuyOnce::new(100.0),
                 None,
             )
             .unwrap()

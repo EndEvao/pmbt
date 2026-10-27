@@ -43,6 +43,25 @@ returns ordered `Action`s. Snapshots and portfolio state are borrowed read-only.
 An order request may be rejected; submitting one is not evidence of a fill.
 Use a fresh strategy for each independent run.
 
+The following snippets assume this small strategy is defined in your application:
+
+```rust
+use pmbt::{domain::{marketstate::MarketState, order::{OrderRequest, OrderSide, TimeInForce}},
+    portfolio::Portfolio, strategy::{Action, OpenOrder, Strategy}};
+struct BuyOnce { size: f64, submitted: bool }
+impl BuyOnce {
+    fn new(size: f64) -> Self { Self { size, submitted: false } }
+}
+impl Strategy for BuyOnce {
+    fn on_market_state(&mut self, state: &MarketState, _: &Portfolio, _: &[OpenOrder]) -> Vec<Action> {
+        if self.submitted { return vec![]; }
+        self.submitted = true;
+        vec![Action::Place(OrderRequest::market(state.market_id().clone(),
+            OrderSide::Buy, self.size, TimeInForce::Fok))]
+    }
+}
+```
+
 ```rust,no_run
 use pmbt::{Backtest, BacktestConfig, OutputConfig, StrategyMetadata};
 use pmbt::config::{SimulationConfig, SimulationProfile};
@@ -54,7 +73,7 @@ config.initial_capital = 5_000.0;
 // Add more chronological files for the SAME token via config.book_paths.
 // config.resolution = None leaves inventory unresolved.
 let overrides = SimulationConfig { fees: Some(false), ..Default::default() };
-let mut strategy = pmbt::buyandhold::BuyAndHold::new(25.0);
+let mut strategy = BuyOnce::new(25.0);
 let outcome = Backtest::new(config)
     .overrides(overrides)
     .metadata(StrategyMetadata::new("Baseline"))
@@ -108,7 +127,7 @@ use pmbt::universe::Universe;
 let mut config = BatchConfig::new(Universe::load("universes/example.toml")?);
 config.outputs.html = Some("runs/batch.html".into());
 let outcome = run_batch(config, |_entry| {
-    Box::new(pmbt::buyandhold::BuyAndHold::new(25.0))
+    Box::new(BuyOnce::new(25.0))
 })?;
 println!("{} markets, P&L {}", outcome.aggregate.markets, outcome.aggregate.total_pnl);
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -136,7 +155,7 @@ let config = ComparisonConfig {
     ladder: true,
     outputs: ExperimentOutputs { html: Some("runs/compare.html".into()), json: None },
 };
-let outcome = run_comparison(config, || Box::new(pmbt::buyandhold::BuyAndHold::new(25.0)))?;
+let outcome = run_comparison(config, || Box::new(BuyOnce::new(25.0)))?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -186,3 +205,11 @@ Specify whether your application collects build-time or run-time checkout
 state. A run-time Git revision does not prove that an already-built binary came
 from that exact tree. For strict reproducibility, build from clean pinned
 sources and archive the configuration and data identifiers as well.
+
+## Bundled-strategy API migration
+
+The bundled `buyandhold`, `buyandsell`, `accumulator`, and `quoter` modules are
+CLI demonstrations, not library exports. The named CLI commands still work.
+Replace imports such as `pmbt::buyandhold::BuyAndHold` in Rust applications with
+an application-owned `Strategy`, as shown above. Engine tests use deterministic
+test-only strategies; the library no longer depends on CLI demonstrations.

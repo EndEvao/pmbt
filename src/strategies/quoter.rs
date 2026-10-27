@@ -20,7 +20,7 @@
 //!
 //! This is the knob that decides how much the optimistic fill model is
 //! flattering us. Joining a queue assumes we are at its front when we are
-//! really behind whatever already rests there ([`crate::resting`] explains the
+//! really behind whatever already rests there ([`pmbt::resting`] explains the
 //! consequence). **Improving** is different: a price level nobody else occupies
 //! makes front-of-queue nearly true, so those fills are the defensible ones.
 //!
@@ -40,11 +40,11 @@
 
 use std::collections::HashSet;
 
-use crate::domain::marketstate::MarketState;
-use crate::domain::order::{OrderRequest, OrderSide, TimeInForce};
-use crate::domain::types::{OrderId, Price};
-use crate::portfolio::Portfolio;
-use crate::strategy::{Action, OpenOrder, Strategy};
+use pmbt::domain::marketstate::MarketState;
+use pmbt::domain::order::{OrderRequest, OrderSide, TimeInForce};
+use pmbt::domain::types::{OrderId, Price};
+use pmbt::portfolio::Portfolio;
+use pmbt::strategy::{Action, OpenOrder, Strategy};
 
 /// Micro-ticks in one cent. Polymarket's tick is per-market (0.01 down to
 /// 0.0001); we don't carry that metadata yet, and every market in the dev data
@@ -124,15 +124,15 @@ impl Strategy for Quoter {
         let (Some(bid), Some(ask)) = (state.bid(), state.ask()) else {
             return Vec::new();
         };
-        if bid.price >= ask.price {
+        if bid.price() >= ask.price() {
             return Vec::new();
         }
 
         // Step both quotes off the touch. Out-of-range prices (near 0 or 1)
         // simply mean there is no quote to make.
         let (Ok(want_bid), Ok(want_ask)) = (
-            Price::new(bid.price.ticks() - self.offset_ticks * TICK),
-            Price::new(ask.price.ticks() + self.offset_ticks * TICK),
+            Price::new(bid.price().ticks() - self.offset_ticks * TICK),
+            Price::new(ask.price().ticks() + self.offset_ticks * TICK),
         ) else {
             return Vec::new();
         };
@@ -146,7 +146,7 @@ impl Strategy for Quoter {
         self.cancelling
             .retain(|id| orders.iter().any(|o| o.id == *id));
 
-        let position = portfolio.position(&state.market_id).quantity();
+        let position = portfolio.position(state.market_id()).quantity();
         let live_bid = Self::live(orders, &self.cancelling, OrderSide::Buy);
         let live_ask = Self::live(orders, &self.cancelling, OrderSide::Sell);
         let priced_at =
@@ -176,7 +176,7 @@ impl Strategy for Quoter {
             let quantity = self.size.min(room);
             if quantity > 0.0 {
                 actions.push(Action::Place(OrderRequest::limit(
-                    state.market_id.clone(),
+                    state.market_id().clone(),
                     OrderSide::Buy,
                     quantity,
                     want_bid,
@@ -193,7 +193,7 @@ impl Strategy for Quoter {
             let quantity = self.size.min(free);
             if quantity > 0.0 {
                 actions.push(Action::Place(OrderRequest::limit(
-                    state.market_id.clone(),
+                    state.market_id().clone(),
                     OrderSide::Sell,
                     quantity,
                     want_ask,
@@ -209,9 +209,10 @@ impl Strategy for Quoter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::marketstate::Level;
-    use crate::domain::types::MarketId;
-    use crate::strategy::OrderState;
+    use crate::strategies::test_helpers::buy;
+    use pmbt::domain::marketstate::Level;
+    use pmbt::domain::types::MarketId;
+    use pmbt::strategy::OrderState;
 
     fn price(p: f64) -> Price {
         Price::from_probability(p).unwrap()
@@ -221,25 +222,14 @@ mod tests {
         MarketState::new(
             MarketId::new("token".to_string()),
             1,
-            Box::from([Level {
-                price: price(bid),
-                size: 1_000.0,
-            }]),
-            Box::from([Level {
-                price: price(ask),
-                size: 1_000.0,
-            }]),
+            Box::from([Level::new(price(bid), 1_000.0).unwrap()]),
+            Box::from([Level::new(price(ask), 1_000.0).unwrap()]),
         )
         .unwrap()
     }
 
     fn one_sided(bid: Option<f64>) -> MarketState {
-        let level = |p: f64| {
-            Box::from([Level {
-                price: price(p),
-                size: 10.0,
-            }])
-        };
+        let level = |p: f64| Box::from([Level::new(price(p), 10.0).unwrap()]);
         MarketState::new(
             MarketId::new("token".to_string()),
             1,
@@ -288,10 +278,7 @@ mod tests {
     fn offers_inventory_once_it_holds_some() {
         let mut q = Quoter::new(100.0, 0, 500.0);
         let mut portfolio = Portfolio::new(10_000.0);
-        portfolio.apply(
-            &MarketId::new("token".to_string()),
-            &crate::domain::fill::Fill::new(OrderSide::Buy, price(0.35), 60.0, 1),
-        );
+        buy(&mut portfolio, "token", price(0.35), 60.0);
         let actions = q.on_market_state(&book(0.35, 0.36), &portfolio, &[]);
         // Bids for more, and offers the 60 it actually has (not the full size).
         assert_eq!(
@@ -304,7 +291,7 @@ mod tests {
     fn a_stale_quote_is_cancelled_before_the_replacement() {
         let mut q = Quoter::new(100.0, 0, 500.0);
         let stale = OpenOrder {
-            id: crate::domain::types::OrderId::new(7),
+            id: pmbt::domain::types::OrderId::new(7),
             side: OrderSide::Buy,
             quantity: 100.0,
             limit_price: Some(price(0.30)),
@@ -320,7 +307,7 @@ mod tests {
     fn a_correctly_priced_quote_is_left_alone() {
         let mut q = Quoter::new(100.0, 0, 500.0);
         let good = OpenOrder {
-            id: crate::domain::types::OrderId::new(7),
+            id: pmbt::domain::types::OrderId::new(7),
             side: OrderSide::Buy,
             quantity: 100.0,
             limit_price: Some(price(0.35)),
@@ -356,10 +343,7 @@ mod tests {
     fn the_inventory_limit_stops_the_bid() {
         let mut q = Quoter::new(100.0, 0, 100.0);
         let mut portfolio = Portfolio::new(10_000.0);
-        portfolio.apply(
-            &MarketId::new("token".to_string()),
-            &crate::domain::fill::Fill::new(OrderSide::Buy, price(0.35), 100.0, 1),
-        );
+        buy(&mut portfolio, "token", price(0.35), 100.0);
         let actions = q.on_market_state(&book(0.35, 0.36), &portfolio, &[]);
         // At the limit: offer only, no more bidding.
         assert_eq!(placed(&actions), vec![(OrderSide::Sell, 0.36, 100.0)]);

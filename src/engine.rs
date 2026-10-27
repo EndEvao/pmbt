@@ -1153,8 +1153,6 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buyandhold::BuyAndHold;
-    use crate::buyandsell::BuyAndSell;
     use crate::domain::marketstate::Level;
     use crate::domain::order::TimeInForce;
     use crate::feed::Snapshot;
@@ -1162,6 +1160,8 @@ mod tests {
     use crate::fill::sweep::SweepFillModel;
     use crate::io;
     use crate::io::LoadError;
+    use crate::test_support::AlternateSides;
+    use crate::test_support::BuyOnce;
 
     /// A one-level book with chosen touch prices, plenty of size.
     fn snapshot_at(timestamp: i64, bid: f64, ask: f64) -> MarketState {
@@ -1419,11 +1419,7 @@ mod tests {
             snapshot_at(2_000_000, 0.09, 0.10),
             snapshot_at(3_000_000, 0.19, 0.20),
         ];
-        let result = run_sim(
-            snaps,
-            &mut BuyAndHold::new(100.0),
-            perception_sim(1_000_000),
-        );
+        let result = run_sim(snaps, &mut BuyOnce::new(100.0), perception_sim(1_000_000));
 
         assert_eq!(result.fills, 1);
         assert!((result.open_position.unwrap().average_price() - 0.10).abs() < 1e-9);
@@ -1439,11 +1435,7 @@ mod tests {
             snapshot(2_000_000),
             snapshot(3_000_000),
         ];
-        let result = run_sim(
-            snaps,
-            &mut BuyAndHold::new(100.0),
-            perception_sim(10_000_000),
-        );
+        let result = run_sim(snaps, &mut BuyOnce::new(100.0), perception_sim(10_000_000));
 
         assert_eq!(result.fills, 0);
         assert_eq!(result.rejections, 0);
@@ -1455,8 +1447,8 @@ mod tests {
     #[test]
     fn perception_with_zero_feed_is_identical_to_perception_off() {
         let snaps = || vec![snapshot(1_000_000), snapshot(2_000_000)];
-        let on = run_sim(snaps(), &mut BuyAndHold::new(100.0), perception_sim(0));
-        let off = run_sim(snaps(), &mut BuyAndHold::new(100.0), Simulation::zero());
+        let on = run_sim(snaps(), &mut BuyOnce::new(100.0), perception_sim(0));
+        let off = run_sim(snaps(), &mut BuyOnce::new(100.0), Simulation::zero());
         assert_eq!(on, off);
     }
 
@@ -1612,7 +1604,7 @@ mod tests {
     fn taker_fee_is_charged_on_a_buy() {
         // Buy 100 @ 0.085 ask, rate 0.05: fee = 100 × 0.05 × 0.085 × 0.915.
         let fee = 100.0 * 0.05 * 0.085 * 0.915;
-        let result = run_fee(&mut BuyAndHold::new(100.0), None, 0.05);
+        let result = run_fee(&mut BuyOnce::new(100.0), None, 0.05);
 
         assert!((result.fees - fee).abs() < 1e-9);
         assert!((result.final_cash - (10_000.0 - 8.5 - fee)).abs() < 1e-9);
@@ -1623,17 +1615,17 @@ mod tests {
 
     #[test]
     fn zero_fee_rate_matches_the_fee_free_run() {
-        let with_zero = run_fee(&mut BuyAndHold::new(100.0), Some(0.0), 0.0);
-        let fee_free = run(&mut BuyAndHold::new(100.0), Some(0.0));
+        let with_zero = run_fee(&mut BuyOnce::new(100.0), Some(0.0), 0.0);
+        let fee_free = run(&mut BuyOnce::new(100.0), Some(0.0));
         assert_eq!(with_zero, fee_free);
     }
 
     #[test]
     fn taker_fee_hits_both_sides_of_a_round_trip() {
-        // BuyAndSell buys @ 0.085 then sells @ 0.08, both taker fills.
+        // AlternateSides buys @ 0.085 then sells @ 0.08, both taker fills.
         let buy_fee = 100.0 * 0.05 * 0.085 * 0.915;
         let sell_fee = 100.0 * 0.05 * 0.08 * 0.92;
-        let result = run_fee(&mut BuyAndSell::new(100.0), Some(1.0), 0.05);
+        let result = run_fee(&mut AlternateSides::new(100.0), Some(1.0), 0.05);
 
         assert!((result.fees - (buy_fee + sell_fee)).abs() < 1e-9);
         assert_eq!(result.settlement, Settlement::NothingHeld); // ended flat
@@ -1647,7 +1639,7 @@ mod tests {
         sim.fee_rate = 0.05;
         let feed = io::fixture(vec![snapshot(1)]);
         let result = Engine::new(8.5, Box::new(NaiveFillModel), sim)
-            .run(feed, &mut BuyAndHold::new(100.0), None)
+            .run(feed, &mut BuyOnce::new(100.0), None)
             .unwrap();
 
         assert_eq!(result.rejections, 1);
@@ -1659,15 +1651,15 @@ mod tests {
     fn money_flow_invariant_holds_with_fee_and_settlement() {
         // Buy 100 @ 0.085 with a fee, settle the winner at $1 → nothing left
         // open, so final_cash − initial must equal total_pnl exactly.
-        let result = run_fee(&mut BuyAndHold::new(100.0), Some(1.0), 0.05);
+        let result = run_fee(&mut BuyOnce::new(100.0), Some(1.0), 0.05);
         assert!(matches!(result.settlement, Settlement::Settled { .. }));
         assert!((result.final_cash - result.initial_capital - result.total_pnl).abs() < 1e-9);
     }
 
     #[test]
     fn winning_resolution_redeems_at_one() {
-        // BuyAndHold: 100 shares lifted at the 0.085 ask, held to the end.
-        let result = run(&mut BuyAndHold::new(100.0), Some(1.0));
+        // BuyOnce: 100 shares lifted at the 0.085 ask, held to the end.
+        let result = run(&mut BuyOnce::new(100.0), Some(1.0));
 
         assert!(matches!(
             result.settlement,
@@ -1682,7 +1674,7 @@ mod tests {
 
     #[test]
     fn losing_resolution_redeems_at_zero() {
-        let result = run(&mut BuyAndHold::new(100.0), Some(0.0));
+        let result = run(&mut BuyOnce::new(100.0), Some(0.0));
 
         assert!(matches!(
             result.settlement,
@@ -1694,7 +1686,7 @@ mod tests {
 
     #[test]
     fn unresolved_reports_the_open_position_unmarked() {
-        let result = run(&mut BuyAndHold::new(100.0), None);
+        let result = run(&mut BuyOnce::new(100.0), None);
 
         assert_eq!(result.settlement, Settlement::Unresolved);
         let position = result.open_position.expect("holding survives the run");
@@ -1734,7 +1726,7 @@ mod tests {
         )
         .run(
             feed,
-            &mut BuyAndHold::new(size),
+            &mut BuyOnce::new(size),
             resolution.map(|r| Price::from_probability(r).unwrap()),
         )
         .unwrap()
@@ -1792,7 +1784,7 @@ mod tests {
         // 100 shares at the 0.085 ask costs 8.50; give the engine less.
         let feed = io::fixture(vec![snapshot(1)]);
         let result = Engine::new(5.0, Box::new(NaiveFillModel), Simulation::zero())
-            .run(feed, &mut BuyAndHold::new(100.0), None)
+            .run(feed, &mut BuyOnce::new(100.0), None)
             .unwrap();
 
         assert_eq!(result.rejections, 1);
@@ -1802,8 +1794,8 @@ mod tests {
 
     #[test]
     fn resolution_with_flat_book_settles_nothing() {
-        // BuyAndSell buys on snapshot 1 and sells on snapshot 2: ends flat.
-        let result = run(&mut BuyAndSell::new(100.0), Some(1.0));
+        // AlternateSides buys on snapshot 1 and sells on snapshot 2: ends flat.
+        let result = run(&mut AlternateSides::new(100.0), Some(1.0));
 
         assert_eq!(result.settlement, Settlement::NothingHeld);
         assert_eq!(result.open_position, None);

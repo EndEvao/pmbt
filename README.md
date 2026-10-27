@@ -255,7 +255,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test -- --ignored      # slow replays over the real data files
 ```
 
-Example strategies live in [`strategies/`](strategies/) — `buyandhold`, `buyandsell`, `quoter`, `quoter-improve`, `accumulator` — each a single file implementing the one `Strategy` trait; see the [folder readme](strategies/README.md) for what each demonstrates. Data acquisition lives in [`scripts/`](scripts/). Backtest data is not committed — point the tool at your own Telonex pulls or converted captures.
+CLI-only example strategies live in [`src/strategies/`](src/strategies/) — `buyandhold`, `buyandsell`, `quoter`, `quoter-improve`, `accumulator` — each a single file implementing the one `Strategy` trait; see the [folder readme](src/strategies/README.md) for what each demonstrates. Data acquisition lives in [`scripts/`](scripts/). Backtest data is not committed — point the tool at your own Telonex pulls or converted captures.
 
 ## Roadmap
 

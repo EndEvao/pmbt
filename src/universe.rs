@@ -471,10 +471,10 @@ mod tests {
     #[test]
     #[ignore = "runs the real sample data; run with `cargo test -- --ignored`"]
     fn example_universe_reproduces_the_known_single_run() {
-        use crate::buyandhold::BuyAndHold;
         use crate::engine::Engine;
         use crate::feed::MergedFeed;
         use crate::fill::sweep::SweepFillModel;
+        use crate::test_support::BuyOnce;
 
         let universe = Universe::load("universes/example.toml").unwrap();
         let mut results = Vec::new();
@@ -487,11 +487,7 @@ mod tests {
                 Box::new(SweepFillModel),
                 crate::engine::Simulation::zero(),
             )
-            .run(
-                feed,
-                &mut BuyAndHold::new(100.0),
-                entry.resolution().unwrap(),
-            )
+            .run(feed, &mut BuyOnce::new(100.0), entry.resolution().unwrap())
             .unwrap();
             results.push((entry.market_id.clone(), result));
         }

@@ -70,7 +70,7 @@ fn cli_and_library_match_under_profile_overrides_for_all_outputs() {
                 ..Default::default()
             })
             .outputs(OutputConfig::json(dir.path("lib.json")))
-            .run(&mut pmbt::buyandhold::BuyAndHold::new(100.0))
+            .run(&mut common::strategy::BuyOnce::new(100.0))
             .unwrap();
         let expected = json(&dir.path("lib.json"))["summary"].clone();
         if mask & 2 != 0 {

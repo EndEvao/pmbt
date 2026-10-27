@@ -12,6 +12,15 @@ pub struct Level {
 }
 
 impl Level {
+    /// Construct a displayed level. Size must be finite and nonnegative;
+    /// zero is allowed for a depleted level. Prices are already validated.
+    pub fn new(price: Price, size: f64) -> Result<Self, BookError> {
+        if !size.is_finite() || size < 0.0 {
+            return Err(BookError::InvalidLevelSize(size));
+        }
+        Ok(Self { price, size })
+    }
+
     /// Price at this level.
     pub fn price(&self) -> Price {
         self.price
@@ -270,6 +279,8 @@ mod consume_tests {
 /// Why a book couldn't be built — a ladder invariant was violated.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum BookError {
+    #[error("level size must be finite and nonnegative, got {0}")]
+    InvalidLevelSize(f64),
     #[error("bids not strictly descending at index {index}")]
     UnsortedBids { index: usize },
     #[error("asks not strictly ascending at index {index}")]

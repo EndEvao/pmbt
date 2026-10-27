@@ -322,7 +322,7 @@ mod tests {
         Engine::new(10000., Box::new(SweepFillModel), sim)
             .run_recorded(
                 feed,
-                &mut crate::buyandsell::BuyAndSell::new(1.),
+                &mut crate::test_support::AlternateSides::new(1.),
                 resolved.then(|| Price::new(1_000_000).unwrap()),
                 recorder,
             )
@@ -431,7 +431,7 @@ mod tests {
         );
         let result = Engine::new(100., Box::new(SweepFillModel), Simulation::zero()).run_recorded(
             io::fixture(vec![snapshot(0), snapshot(10)]),
-            &mut crate::buyandhold::BuyAndHold::new(1.),
+            &mut crate::test_support::BuyOnce::new(1.),
             None,
             &mut stream,
         );

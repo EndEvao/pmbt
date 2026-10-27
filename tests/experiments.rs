@@ -1,8 +1,8 @@
 #[allow(dead_code)]
 mod common;
+use common::strategy::BuyOnce;
 use common::{book, json, TestDir};
 use pmbt::{
-    buyandhold::BuyAndHold,
     config::{resolve, SimulationConfig},
     domain::types::Price,
     experiments::{
@@ -63,7 +63,7 @@ fn batch_factory_is_fresh_capital_independent_and_totals_match_cli() {
     let mut called = Vec::new();
     let result = run_batch(config, |entry| {
         called.push(entry.market_id.clone());
-        Box::new(BuyAndHold::new(100.0))
+        Box::new(BuyOnce::new(100.0))
     })
     .unwrap();
     assert_eq!(called, ["one", "two"]);
@@ -91,7 +91,7 @@ fn batch_factory_is_fresh_capital_independent_and_totals_match_cli() {
     );
     assert_eq!(json(&dir.path("cli.json")), json(&dir.path("lib.json")));
     let plain = run_batch(BatchConfig::new(universe(&dir)), |_| {
-        Box::new(BuyAndHold::new(100.0))
+        Box::new(BuyOnce::new(100.0))
     })
     .unwrap();
     assert_eq!(plain.aggregate, result.aggregate);
@@ -110,7 +110,7 @@ fn comparison_axes_match_cli_and_independent_single_runs() {
         let mut calls = 0;
         let outcome = run_comparison(config, || {
             calls += 1;
-            Box::new(BuyAndHold::new(100.0))
+            Box::new(BuyOnce::new(100.0))
         })
         .unwrap();
         assert_eq!(calls, outcome.runs.len());
@@ -134,9 +134,7 @@ fn comparison_axes_match_cli_and_independent_single_runs() {
                 category: options.category,
                 ..Default::default()
             };
-            let single = Backtest::new(input)
-                .run(&mut BuyAndHold::new(100.0))
-                .unwrap();
+            let single = Backtest::new(input).run(&mut BuyOnce::new(100.0)).unwrap();
             assert_eq!(run.result, single.result);
         }
         let out = Command::new(env!("CARGO_BIN_EXE_pmbt"))
@@ -172,7 +170,7 @@ fn later_market_failure_aborts_without_aggregate_files() {
     let mut calls = 0;
     let result = run_batch(config, |_| {
         calls += 1;
-        Box::new(BuyAndHold::new(10.0))
+        Box::new(BuyOnce::new(10.0))
     });
     assert!(
         matches!(result, Err(ExperimentError::Run {label, source:BacktestError::Input {..}}) if label == "two")
@@ -191,7 +189,7 @@ fn malformed_feed_and_empty_comparison_fail_without_success_outputs() {
         "token",
         &[(5_000_000, "0.4", "0.5"), (1_000_000, "0.4", "0.5")],
     );
-    let result = run_comparison(config, || Box::new(BuyAndHold::new(10.0)));
+    let result = run_comparison(config, || Box::new(BuyOnce::new(10.0)));
     assert!(matches!(
         result,
         Err(ExperimentError::Run {

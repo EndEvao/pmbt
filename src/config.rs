@@ -278,7 +278,7 @@ mod tests {
             let result = Engine::new(1000.0, settings.fill(), settings.simulation(None))
                 .run(
                     crate::io::fixture(vec![state]),
-                    &mut crate::buyandhold::BuyAndHold::new(20.0),
+                    &mut crate::test_support::BuyOnce::new(20.0),
                     Some(Price::from_probability(1.0).unwrap()),
                 )
                 .unwrap();

@@ -130,3 +130,46 @@ pub fn html_data(path: &Path) -> serde_json::Value {
         .unwrap();
     serde_json::from_str(data).unwrap()
 }
+
+#[allow(dead_code)]
+pub mod strategy {
+    use pmbt::{
+        domain::{
+            marketstate::MarketState,
+            order::{OrderRequest, OrderSide, TimeInForce},
+        },
+        portfolio::Portfolio,
+        strategy::{Action, OpenOrder, Strategy},
+    };
+    pub struct BuyOnce {
+        size: f64,
+        submitted: bool,
+    }
+    impl BuyOnce {
+        pub fn new(size: f64) -> Self {
+            Self {
+                size,
+                submitted: false,
+            }
+        }
+    }
+    impl Strategy for BuyOnce {
+        fn on_market_state(
+            &mut self,
+            state: &MarketState,
+            _: &Portfolio,
+            _: &[OpenOrder],
+        ) -> Vec<Action> {
+            if self.submitted {
+                return vec![];
+            }
+            self.submitted = true;
+            vec![Action::Place(OrderRequest::market(
+                state.market_id().clone(),
+                OrderSide::Buy,
+                self.size,
+                TimeInForce::Fok,
+            ))]
+        }
+    }
+}

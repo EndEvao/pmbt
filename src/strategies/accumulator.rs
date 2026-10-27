@@ -18,11 +18,11 @@
 //!   selection — the order sits at a price the market has left. That cost is the
 //!   point of running it, not a flaw to tune away.
 
-use crate::domain::marketstate::MarketState;
-use crate::domain::order::{OrderRequest, OrderSide, TimeInForce};
-use crate::domain::types::Price;
-use crate::portfolio::Portfolio;
-use crate::strategy::{Action, OpenOrder, Strategy};
+use pmbt::domain::marketstate::MarketState;
+use pmbt::domain::order::{OrderRequest, OrderSide, TimeInForce};
+use pmbt::domain::types::Price;
+use pmbt::portfolio::Portfolio;
+use pmbt::strategy::{Action, OpenOrder, Strategy};
 
 /// Micro-ticks in one cent — mirrors the constant in `quoter`; every market in
 /// the dev data is on the cent grid (see the note on `OrderRequest`).
@@ -97,24 +97,24 @@ impl Accumulator {
             return Vec::new();
         };
         // Below the grid there is simply no quote to make.
-        let Ok(want) = Price::new(bid.price.ticks() - self.depth_ticks * TICK) else {
+        let Ok(want) = Price::new(bid.price().ticks() - self.depth_ticks * TICK) else {
             return Vec::new();
         };
 
         // Nothing is working (checked above), so the filled position is the
         // whole exposure — no in-flight term is needed.
-        let room = self.max_inventory - portfolio.position(&state.market_id).quantity();
+        let room = self.max_inventory - portfolio.position(state.market_id()).quantity();
         let quantity = self.size.min(room);
         if quantity <= 0.0 {
             return Vec::new();
         }
 
         vec![Action::Place(OrderRequest::limit(
-            state.market_id.clone(),
+            state.market_id().clone(),
             OrderSide::Buy,
             quantity,
             want,
-            TimeInForce::gtd_after(state.timestamp, self.life_us),
+            TimeInForce::gtd_after(state.timestamp(), self.life_us),
         ))]
     }
 }
@@ -122,24 +122,20 @@ impl Accumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::fill::Fill;
-    use crate::domain::marketstate::Level;
-    use crate::domain::types::MarketId;
-    use crate::strategy::OrderState;
+    use crate::strategies::test_helpers::buy;
+    use pmbt::domain::marketstate::Level;
+    use pmbt::domain::types::MarketId;
+    use pmbt::strategy::OrderState;
 
     fn book(bid: f64, ask: f64) -> MarketState {
-        let level = |p: f64| {
-            Box::from([Level {
-                price: Price::from_probability(p).unwrap(),
-                size: 500.0,
-            }])
-        };
+        let level =
+            |p: f64| Box::from([Level::new(Price::from_probability(p).unwrap(), 500.0).unwrap()]);
         MarketState::new(MarketId::new("t".to_string()), 0, level(bid), level(ask)).unwrap()
     }
 
     fn live_bid() -> OpenOrder {
         OpenOrder {
-            id: crate::domain::types::OrderId::new(1),
+            id: pmbt::domain::types::OrderId::new(1),
             side: OrderSide::Buy,
             quantity: 100.0,
             limit_price: Some(Price::from_probability(0.35).unwrap()),
@@ -176,7 +172,6 @@ mod tests {
 
     #[test]
     fn stops_bidding_once_the_inventory_limit_is_reached() {
-        let market = MarketId::new("t".to_string());
         let mut s = Accumulator::new(100.0, 0, TimeInForce::GTD_MIN_LIFE_US, 100.0);
         let mut portfolio = Portfolio::new(10_000.0);
         // Empty book position: it bids.
@@ -186,14 +181,11 @@ mod tests {
             "with room, it places"
         );
         // Fill it up to the limit; now there is no room left.
-        portfolio.apply(
-            &market,
-            &Fill::new(
-                OrderSide::Buy,
-                Price::from_probability(0.35).unwrap(),
-                100.0,
-                0,
-            ),
+        buy(
+            &mut portfolio,
+            "t",
+            Price::from_probability(0.35).unwrap(),
+            100.0,
         );
         assert!(
             s.on_market_state(&book(0.35, 0.36), &portfolio, &[])

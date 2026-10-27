@@ -286,7 +286,7 @@ mod tests {
         let result = Engine::new(10_000.0, Box::new(SweepFillModel), Simulation::zero())
             .run_recorded(
                 feed,
-                &mut crate::buyandhold::BuyAndHold::new(100.0),
+                &mut crate::test_support::BuyOnce::new(100.0),
                 Some(Price::from_probability(1.0).unwrap()),
                 &mut recorder,
             )

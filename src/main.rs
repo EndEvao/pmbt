@@ -1,11 +1,10 @@
+mod strategies;
+
 use std::env;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process;
 
-use pmbt::accumulator::Accumulator;
-use pmbt::buyandhold::BuyAndHold;
-use pmbt::buyandsell::BuyAndSell;
 use pmbt::config::{resolve, SimulationConfig, SimulationProfile};
 use pmbt::convert::convert_capture;
 use pmbt::domain::order::TimeInForce;
@@ -15,7 +14,6 @@ use pmbt::experiments::{
     comparison_matrix as build_compare_matrix, run_batch, run_comparison, BatchConfig,
     ComparisonConfig, ExperimentOutputs,
 };
-use pmbt::quoter::Quoter;
 use pmbt::resting::QueueModel;
 use pmbt::strategy::Strategy;
 use pmbt::universe::{Category, Universe};
@@ -23,6 +21,10 @@ use pmbt::{
     ArtifactKind, Backtest, BacktestConfig, OutputConfig, RecordingMode, RunDiagnostic,
     StrategyMetadata,
 };
+use strategies::accumulator::Accumulator;
+use strategies::buyandhold::BuyAndHold;
+use strategies::buyandsell::BuyAndSell;
+use strategies::quoter::Quoter;
 
 const INITIAL_CAPITAL: f64 = 10_000.0;
 
