@@ -3,10 +3,15 @@ name = "pmbt-cli"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "Command-line backtesting tools and example strategies for pmbt"
+repository = "https://github.com/EndEvao/pmbt"
+readme = "README.md"
+include = ["src/**", "tests/**", "examples/**", "assets/**", "Cargo.toml", "README.md", "LICENSE"]
 
 [[bin]]
 name = "pmbt"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 pmbt = { version = "0.1.0", path = "../pmbt" }

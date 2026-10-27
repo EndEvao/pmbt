@@ -213,6 +213,21 @@ The honest caveats, stated rather than buried:
 
 ---
 
+## Rust workspace
+
+| Package | Responsibility |
+|---|---|
+| [`pmbt`](crates/pmbt/) | Library, reports, public APIs, and a custom-strategy example |
+| [`pmbt-cli`](crates/pmbt-cli/) | The `pmbt` executable and bundled demonstration strategies |
+
+The dependency is one-way: CLI → library. `cargo run -- run ...` still works
+from the repository root. Use `cargo run -p pmbt --example library_usage -- ...`
+for the library example, and `cargo test --workspace` for all packages.
+Python bindings are not part of this workspace yet.
+
+See [Rust packaging and migration](docs/rust-packaging.md) for package checks,
+local installation, and dependency path changes.
+
 ## Library use
 
 Keep private strategies in a separate Rust application with `pmbt = { path = "../pmbt/crates/pmbt" }`.
@@ -249,10 +264,10 @@ cargo run -- run quoter <token_book_snapshot_full.parquet> --record-dir runs/quo
 # convert a raw websocket capture into per-asset Telonex-parity parquet (book + trades)
 cargo run -- convert <capture.jsonl> <out_dir>
 
-cargo test                   # unit and regression suites
-cargo test --release         # also verifies release-build validation
-cargo clippy --all-targets -- -D warnings
-cargo test -- --ignored      # slow replays over the real data files
+cargo test --workspace       # unit and regression suites
+cargo test --workspace --release # also verifies release-build validation
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p pmbt -- --ignored      # slow replays over the real data files
 ```
 
 CLI-only example strategies live in [`crates/pmbt-cli/src/strategies/`](crates/pmbt-cli/src/strategies/) — `buyandhold`, `buyandsell`, `quoter`, `quoter-improve`, `accumulator` — each a single file implementing the one `Strategy` trait; see the [folder readme](crates/pmbt-cli/src/strategies/README.md) for what each demonstrates. Data acquisition lives in [`scripts/`](scripts/). Backtest data is not committed — point the tool at your own Telonex pulls or converted captures.

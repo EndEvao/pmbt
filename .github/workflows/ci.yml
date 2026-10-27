@@ -12,21 +12,23 @@ jobs:
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - name: Formatting
-        run: cargo +stable fmt --check
+        run: cargo +stable fmt --all --check
       - name: Lint
-        run: cargo +stable clippy --locked --all-targets -- -D warnings
+        run: cargo +stable clippy --locked --workspace --all-targets -- -D warnings
       - name: Library examples
-        run: cargo +stable check --locked --examples
+        run: cargo +stable check --locked -p pmbt --examples
       - name: Documentation examples
-        run: cargo +stable test --locked --doc
+        run: cargo +stable test --locked --workspace --doc
       - name: API documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo +stable doc --locked --no-deps
+        run: cargo +stable doc --locked --workspace --no-deps
       - name: Debug tests
-        run: cargo +stable test --locked
+        run: cargo +stable test --locked --workspace
       - name: Release tests
-        run: cargo +stable test --locked --release
+        run: cargo +stable test --locked --workspace --release
+      - name: Package and verify Rust library
+        run: cargo +stable package --locked -p pmbt
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

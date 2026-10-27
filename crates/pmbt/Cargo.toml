@@ -3,6 +3,10 @@ name    = "pmbt"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "Event-driven prediction-market backtesting engine"
+repository = "https://github.com/EndEvao/pmbt"
+readme = "README.md"
+include = ["src/**", "tests/**", "examples/**", "assets/**", "Cargo.toml", "README.md", "LICENSE"]
 
 [dependencies]
 arrow-array = "59.1.0"

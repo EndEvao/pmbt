@@ -1,11 +1,13 @@
 # Using pmbt from your own project
 
-`pmbt` is a Rust library and a CLI in the same package. Put research code in a
+`pmbt` is the Rust library; `pmbt-cli` is a separate package in the same Cargo workspace. Put research code in a
 separate repository beside it. Only the research application depends on pmbt:
 
 ```text
 Desktop/
-  pmbt/            public engine, tests, CLI and report templates
+  pmbt/
+    crates/pmbt/       public library, tests, report templates, example
+    crates/pmbt-cli/   executable and bundled CLI strategies
   pmbt-research/   your strategies, experiment settings and Cargo.lock
 ```
 
@@ -213,3 +215,10 @@ CLI demonstrations, not library exports. The named CLI commands still work.
 Replace imports such as `pmbt::buyandhold::BuyAndHold` in Rust applications with
 an application-owned `Strategy`, as shown above. Engine tests use deterministic
 test-only strategies; the library no longer depends on CLI demonstrations.
+
+Workspace users should run `cargo test --workspace` and
+`cargo clippy --workspace --all-targets -- -D warnings`. The library can be
+checked independently with `cargo test -p pmbt`. See
+[Rust packaging and migration](rust-packaging.md) for archive checks and local
+CLI installation. A local dependency points to the package directory
+`../pmbt/crates/pmbt`, not the virtual workspace root.
