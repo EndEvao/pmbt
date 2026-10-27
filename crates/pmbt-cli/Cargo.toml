@@ -1,0 +1,18 @@
+[package]
+name = "pmbt-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "pmbt"
+path = "src/main.rs"
+
+[dependencies]
+pmbt = { version = "0.1.0", path = "../pmbt" }
+
+[dev-dependencies]
+arrow-array = "59.1.0"
+arrow-schema = "59.1.0"
+parquet = { version = "59.1.0", default-features = false, features = ["arrow", "snap", "zstd"] }
+serde_json = "1.0.150"

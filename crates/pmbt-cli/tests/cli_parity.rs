@@ -117,3 +117,31 @@ fn cli_rejects_bad_arguments_before_reading_inputs() {
         assert!(!error.contains("could not open input"), "{error}");
     }
 }
+
+#[test]
+fn cli_commands_reject_invalid_effective_settings_before_opening_data() {
+    for command in ["run", "compare"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_pmbt"))
+            .args([command, "buyandhold", "missing.parquet", "--fill", "typo"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("unknown fill model"), "{command}: {error}");
+        assert!(output.stdout.is_empty());
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pmbt"))
+        .args([
+            "batch",
+            "buyandhold",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/universe.toml"),
+            "--queue",
+            "typo",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("unknown queue model"));
+}

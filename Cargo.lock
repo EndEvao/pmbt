@@ -482,6 +482,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pmbt-cli"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "parquet",
+ "pmbt",
+ "serde_json",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"

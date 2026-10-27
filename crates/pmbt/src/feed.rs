@@ -929,7 +929,7 @@ mod tests {
     #[test]
     #[ignore = "reads the real data pair; run with `cargo test -- --ignored`"]
     fn every_trade_reaches_a_snapshot() {
-        let path = "data/telonex/110136933550893624733134445460153301975615510734202337526927943993346922198810_2026-06-12_book_snapshot_full.parquet";
+        let path = crate::test_support::data_path("data/telonex/110136933550893624733134445460153301975615510734202337526927943993346922198810_2026-06-12_book_snapshot_full.parquet");
         let (feed, found) = MergedFeed::from_book_path_optional(path).unwrap();
         assert!(found, "the sibling tape should be found");
         let mut feed = feed;
@@ -950,7 +950,7 @@ mod tests {
     #[test]
     #[ignore = "reads the real data pair; run with `cargo test -- --ignored`"]
     fn side_convention_over_real_pair() {
-        let path = "data/telonex/110136933550893624733134445460153301975615510734202337526927943993346922198810_2026-06-14_book_snapshot_full.parquet";
+        let path = crate::test_support::data_path("data/telonex/110136933550893624733134445460153301975615510734202337526927943993346922198810_2026-06-14_book_snapshot_full.parquet");
         let (mut feed, found) = MergedFeed::from_book_path_optional(path).unwrap();
         assert!(found, "the sibling tape should be found");
 

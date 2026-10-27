@@ -5,7 +5,7 @@ import fs from "node:fs";
 import vm from "node:vm";
 import assert from "node:assert/strict";
 const html = fs.readFileSync(
-  process.argv[2] || new URL("../assets/report.html", import.meta.url),
+  process.argv[2] || new URL("../crates/pmbt/assets/report.html", import.meta.url),
   "utf8",
 );
 const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)];

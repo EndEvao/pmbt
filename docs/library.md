@@ -19,22 +19,22 @@ edition = "2021"
 publish = false
 
 [dependencies]
-pmbt = { path = "../pmbt" }
+pmbt = { path = "../pmbt/crates/pmbt" }
 ```
 
 `publish = false` prevents Cargo registry publication; it does not configure Git
 hosting privacy. Keep separate Git histories and choose a private remote for the
 research repository if you later host it. Private code never needs an entry in
-the public CLI registry or `src/lib.rs`.
+the public CLI registry or `crates/pmbt/src/lib.rs`.
 
 ## Single runs
 
-The runnable [library example](../examples/library_usage.rs) defines its own
+The runnable [library example](../crates/pmbt/examples/library_usage.rs) defines its own
 strategy against public APIs, including token ID, timestamp, and level accessors.
 From the pmbt checkout:
 
 ```sh
-cargo run --example library_usage -- /path/token_book_snapshot_full.parquet report.html
+cargo run -p pmbt --example library_usage -- /path/token_book_snapshot_full.parquet report.html
 ```
 
 The report path must be fresh. Omitting it runs without retaining history.

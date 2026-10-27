@@ -1,5 +1,5 @@
 //! A custom strategy using only public APIs, with no registry entry.
-//! cargo run --example library_usage -- <book_snapshot_full.parquet> [report.html]
+//! cargo run -p pmbt --example library_usage -- <book_snapshot_full.parquet> [report.html]
 use pmbt::{
     domain::{
         marketstate::MarketState,

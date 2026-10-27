@@ -550,7 +550,7 @@ mod tests {
         use std::io::BufRead;
 
         // The largest real capture — the most events, the most oracle checks.
-        let path = std::fs::read_dir("data/england_croatia")
+        let path = std::fs::read_dir(crate::test_support::data_path("data/england_croatia"))
             .unwrap()
             .filter_map(Result::ok)
             .map(|e| e.path())

@@ -68,3 +68,10 @@ impl Strategy for AlternateSides {
         ))]
     }
 }
+
+/// Real captures stay outside the package and are never included in releases.
+pub fn data_path(relative: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(relative)
+}

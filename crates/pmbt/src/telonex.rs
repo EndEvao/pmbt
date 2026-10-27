@@ -571,7 +571,7 @@ mod tests {
     #[test]
     #[ignore = "reads the real data file; run with `cargo test -- --ignored`"]
     fn streams_real_file() {
-        let path = std::fs::read_dir("data/telonex_example")
+        let path = std::fs::read_dir(crate::test_support::data_path("data/telonex_example"))
             .unwrap()
             .filter_map(Result::ok)
             .map(|e| e.path())

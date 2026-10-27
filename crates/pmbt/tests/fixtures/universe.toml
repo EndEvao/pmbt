@@ -1,0 +1,23 @@
+# The sample market that ships with the repo's dev data: one resolved
+# geopolitics market ("Will the US strike Iran next?" — resolved No, so the
+# traded Yes token redeemed at $0). Geopolitics/world-events are the fee-free
+# tier.
+name = "example"
+data_dir = "data/telonex_example"
+
+# Per-universe simulation defaults; CLI flags override these, and built-in
+# defaults (fill naive, latency zero, perception off, taker_delay on) fill
+# whatever is unset. `run`/`compare` can borrow this very section with
+# `--config universes/example.toml` (the market entries below are ignored).
+# A `category` here is honoured only by run/compare — batch takes each
+# market's own category from its [[markets]] entry.
+# [simulation]
+# fill = "sweep"
+# latency = "dublin"
+# perception = true
+# taker_delay = false
+
+[[markets]]
+market_id = "100698025363657020790903234023020875322370654614111181942779685024172456779656"
+category = "geopolitics"
+resolution = 0

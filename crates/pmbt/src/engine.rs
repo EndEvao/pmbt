@@ -2068,7 +2068,9 @@ mod tests {
 
         let token =
             "110136933550893624733134445460153301975615510734202337526927943993346922198810";
-        let path = format!("data/telonex/{token}_2026-06-12_book_snapshot_full.parquet");
+        let path = crate::test_support::data_path(&format!(
+            "data/telonex/{token}_2026-06-12_book_snapshot_full.parquet"
+        ));
 
         let run_with = |queue: QueueModel| {
             let (feed, tape) = MergedFeed::from_book_path_optional(&path).unwrap();

@@ -606,7 +606,7 @@ mod tests {
     #[ignore = "converts a real capture; run with `cargo test -- --ignored`"]
     fn real_capture_converts_and_streams_back() {
         // A small-but-nonempty real capture keeps this test quick.
-        let capture = std::fs::read_dir("data/england_croatia")
+        let capture = std::fs::read_dir(crate::test_support::data_path("data/england_croatia"))
             .unwrap()
             .filter_map(Result::ok)
             .map(|e| e.path())

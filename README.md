@@ -215,12 +215,12 @@ The honest caveats, stated rather than buried:
 
 ## Library use
 
-Keep private strategies in a separate Rust application with `pmbt = { path = "../pmbt" }`.
+Keep private strategies in a separate Rust application with `pmbt = { path = "../pmbt/crates/pmbt" }`.
 `Backtest` accepts your strategy directly and handles inputs, simulation settings,
 HTML/JSON/Parquet recording, diagnostics, and errors. `experiments` exposes batch
 and comparison workflows with fresh-strategy factories.
 
-See the [library guide](docs/library.md) and [custom strategy example](examples/library_usage.rs).
+See the [library guide](docs/library.md) and [custom strategy example](crates/pmbt/examples/library_usage.rs).
 The CLI uses the same library workflows. Output files must be new; Parquet output
 directories must be absent or empty, with existing parent directories.
 
@@ -255,7 +255,7 @@ cargo clippy --all-targets -- -D warnings
 cargo test -- --ignored      # slow replays over the real data files
 ```
 
-CLI-only example strategies live in [`src/strategies/`](src/strategies/) — `buyandhold`, `buyandsell`, `quoter`, `quoter-improve`, `accumulator` — each a single file implementing the one `Strategy` trait; see the [folder readme](src/strategies/README.md) for what each demonstrates. Data acquisition lives in [`scripts/`](scripts/). Backtest data is not committed — point the tool at your own Telonex pulls or converted captures.
+CLI-only example strategies live in [`crates/pmbt-cli/src/strategies/`](crates/pmbt-cli/src/strategies/) — `buyandhold`, `buyandsell`, `quoter`, `quoter-improve`, `accumulator` — each a single file implementing the one `Strategy` trait; see the [folder readme](crates/pmbt-cli/src/strategies/README.md) for what each demonstrates. Data acquisition lives in [`scripts/`](scripts/). Backtest data is not committed — point the tool at your own Telonex pulls or converted captures.
 
 ## Roadmap
 

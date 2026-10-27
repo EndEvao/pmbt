@@ -2,7 +2,7 @@
 
 These demonstrations belong to the CLI binary and use only pmbt's public API.
 They are not exported by the engine library. Each implements the `Strategy`
-trait from [`src/strategy.rs`](../strategy.rs).
+trait from [`Strategy`](../../../pmbt/src/strategy.rs).
 
 A strategy is a **pure decider**. It reacts to the market (`on_market_state`) or
 to time passing (`on_time`), folds what it sees into its own `&mut self` state,
@@ -29,8 +29,8 @@ accessors such as `market_id()`, `timestamp()`, `ask().map(|level| level.price()
 and `bids()`. Keep strategy parameters in your application's configuration and
 pass display values through `StrategyMetadata`.
 
-See the [library guide](../../docs/library.md) and
-[external-style example](../../examples/library_usage.rs).
+See the [library guide](../../../../docs/library.md) and
+[external-style example](../../../pmbt/examples/library_usage.rs).
 
 ## Adding a bundled CLI example
 

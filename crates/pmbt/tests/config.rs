@@ -192,7 +192,7 @@ fn fee_and_hold_switches_are_independent() {
 
 #[test]
 fn existing_profile_import_and_load_error_type_still_compile() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("universes/example.toml");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/universe.toml");
     let loaded: Result<pmbt::universe::SimulationProfile, UniverseError> =
         pmbt::universe::SimulationProfile::load(&path);
     let loaded: SimulationProfile = loaded.unwrap();
@@ -242,32 +242,4 @@ fn misspelled_fields_categories_and_non_boolean_toggles_are_rejected() {
     for body in ["percepton = true", "fees = 'off'", "category = 'sport'"] {
         assert!(toml::from_str::<SimulationProfile>(&format!("[simulation]\n{body}")).is_err());
     }
-}
-
-#[test]
-fn cli_commands_reject_invalid_effective_settings_before_opening_data() {
-    for command in ["run", "compare"] {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_pmbt"))
-            .args([command, "buyandhold", "missing.parquet", "--fill", "typo"])
-            .output()
-            .unwrap();
-        assert!(!output.status.success());
-        let error = String::from_utf8(output.stderr).unwrap();
-        assert!(error.contains("unknown fill model"), "{command}: {error}");
-        assert!(output.stdout.is_empty());
-    }
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_pmbt"))
-        .args([
-            "batch",
-            "buyandhold",
-            concat!(env!("CARGO_MANIFEST_DIR"), "/universes/example.toml"),
-            "--queue",
-            "typo",
-        ])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    assert!(String::from_utf8(output.stderr)
-        .unwrap()
-        .contains("unknown queue model"));
 }

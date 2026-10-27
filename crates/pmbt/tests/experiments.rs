@@ -1,7 +1,7 @@
 #[allow(dead_code)]
 mod common;
 use common::strategy::BuyOnce;
-use common::{book, json, TestDir};
+use common::{book, TestDir};
 use pmbt::{
     config::{resolve, SimulationConfig},
     domain::types::Price,
@@ -12,7 +12,7 @@ use pmbt::{
     universe::{Category, Universe},
     Backtest, BacktestConfig, BacktestError,
 };
-use std::{fs, process::Command};
+use std::fs;
 
 fn universe(dir: &TestDir) -> Universe {
     for token in ["one", "two"] {
@@ -53,7 +53,7 @@ fn comparison(dir: &TestDir, axis: &str) -> ComparisonConfig {
 }
 
 #[test]
-fn batch_factory_is_fresh_capital_independent_and_totals_match_cli() {
+fn batch_factory_is_fresh_and_capital_independent() {
     let dir = TestDir::new();
     let mut config = BatchConfig::new(universe(&dir));
     config.outputs = ExperimentOutputs {
@@ -77,19 +77,6 @@ fn batch_factory_is_fresh_capital_independent_and_totals_match_cli() {
     }
     assert_eq!(result.diagnostics.len(), 2);
     assert_eq!(result.artifacts.len(), 2);
-    let out = Command::new(env!("CARGO_BIN_EXE_pmbt"))
-        .args(["batch", "buyandhold"])
-        .arg(dir.path("universe.toml"))
-        .arg("--record")
-        .arg(dir.path("cli.json"))
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert_eq!(json(&dir.path("cli.json")), json(&dir.path("lib.json")));
     let plain = run_batch(BatchConfig::new(universe(&dir)), |_| {
         Box::new(BuyOnce::new(100.0))
     })
@@ -99,7 +86,7 @@ fn batch_factory_is_fresh_capital_independent_and_totals_match_cli() {
 }
 
 #[test]
-fn comparison_axes_match_cli_and_independent_single_runs() {
+fn comparison_axes_match_independent_single_runs() {
     for axis in ["realism", "latency", "fees", "perception", "taker-delay"] {
         let dir = TestDir::new();
         let mut config = comparison(&dir, axis);
@@ -137,27 +124,6 @@ fn comparison_axes_match_cli_and_independent_single_runs() {
             let single = Backtest::new(input).run(&mut BuyOnce::new(100.0)).unwrap();
             assert_eq!(run.result, single.result);
         }
-        let out = Command::new(env!("CARGO_BIN_EXE_pmbt"))
-            .args(["compare", "buyandhold"])
-            .arg(dir.path("token_book_snapshot_full.parquet"))
-            .args([
-                "--axis",
-                axis,
-                "--category",
-                "crypto",
-                "--resolution",
-                "1",
-                "--record",
-            ])
-            .arg(dir.path("cli.json"))
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(json(&dir.path("cli.json")), json(&dir.path("lib.json")));
     }
 }
 
