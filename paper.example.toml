@@ -1,0 +1,11 @@
+# Replace both IDs with the YES and NO outcome asset IDs of one binary market.
+# These are explicit simulation assumptions, not automatically fetched rules.
+yes_asset = "REPLACE_WITH_YES_ASSET_ID"
+no_asset = "REPLACE_WITH_NO_ASSET_ID"
+strategy = "buyandhold" # change to "quoter" after validating the baseline
+capital = 10000.0       # one shared balance across both outcomes
+size = 10.0            # per-outcome order size, in shares
+max_inventory = 50.0   # quoter limit per outcome; orders in cancel transit can exceed it
+fee_rate = 0.0         # set the applicable simulation fee rate explicitly
+transit_ms = 20        # modeled outgoing order transit, not feed delay
+taker_delay_ms = 0     # set the applicable exchange hold assumption explicitly

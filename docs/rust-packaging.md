@@ -12,12 +12,18 @@ crates/pmbt/                  Rust library and custom-strategy example
 crates/pmbt-cli/              pmbt-cli package; pmbt binary
   src/strategies/             CLI demonstrations using public engine APIs
   tests/                      subprocess CLI/library parity checks
+crates/pmbt-live/             live WebSocket transport and capture/replay
+  src/                        adapter, recorder, socket worker and mock tests
 ```
 
 Library tests have no dependency on a CLI executable or demonstration strategy.
 They use deterministic test-only strategy fixtures. CLI tests own subprocess
 checks. Local capture tests remain ignored by default and locate the
 repository's `data/` directory explicitly; datasets are never packaged.
+
+Networking/TLS dependencies are isolated in `pmbt-live`; `pmbt` retains the
+shared synchronous execution kernel. The CLI now depends on both libraries.
+Publish in dependency order: `pmbt`, `pmbt-live`, then `pmbt-cli`.
 
 ## Commands
 

@@ -2,7 +2,7 @@
 
 `pmbt` replays a Polymarket market's **full order-book history** and plays the exchange back to your strategy, tick for tick. It is not a snapshot-loop that marks a curve to mid — it is a small matching engine that gates every order the way Polymarket would, charges the fees Polymarket would, makes orders wait out the latency they really face, and settles the position at resolution through a separate ledger. The point is a P&L you can trust: one where the friction is modelled rather than assumed away, and every optimistic assumption is named and turned into a knob you can move.
 
-It is written in Rust and streams its input data without retaining the full history. Tests cover accounting identities, order gates, execution timing, liquidity consumption, queue modeling, settlement, and reporting, with additional suites that replay captured data end to end. It is a research backtester with explicit modeling limitations, designed to support future live paper trading on the same core (see [Roadmap](#roadmap)).
+It is written in Rust and streams its input data without retaining the full history. Tests cover accounting identities, order gates, execution timing, liquidity consumption, queue modeling, settlement, and reporting, with additional suites that replay captured data end to end. It is a research backtester with explicit modeling limitations, with a live paper-trading prototype on the same execution core (see [running guide](docs/paper-trading.md)).
 
 ```console
 $ cargo run -- run buyandhold data/telonex/<token>_<date>_book_snapshot_full.parquet \
@@ -21,6 +21,14 @@ buyandhold
 That run is real: a full day of book snapshots for a resolved market, a 100-share position lifted at the touch, held to resolution, and redeemed at $1 — the historically true outcome. Trading, settlement, and fees are reported apart because redemption is not a trade.
 
 ---
+
+## Live paper prototype
+
+`pmbt paper` runs buy-and-hold or the quoter on both YES and NO with shared cash,
+reconnects while retaining orders, and records replayable sessions. Start with
+[`paper.example.toml`](paper.example.toml) and the [running guide](docs/paper-trading.md).
+Crash recovery and AWS deployment remain later stages; see the
+[implementation plan](docs/paper-trading-plan.md).
 
 ## Features
 
@@ -108,7 +116,7 @@ When the order's latency window elapses, the fill model computes what crosses ri
 
 The engine reads **Telonex-format Parquet**: `book_snapshot_full` (every book change, all levels, exchange time in microseconds) paired with its sibling `_trades` tape. Each file covers one token and day; consecutive day-files can be chained without loading their full history. A `MergedFeed` interleaves the book and trades streams into one time-ordered event stream of `Book` / `Trade` / `Time` events.
 
-The feed is an `EventSource` trait held to an **executable conformance suite** — five rules every source (including the future live one) must pass, because prose alone once let two implementations disagree and one ticked a replay into 2037. A missing trades tape degrades gracefully (the book replays fine; only resting orders need trades to fill), but a *malformed* one still fails loudly. Fail-fast throughout: the first bad row, out-of-order timestamp, or off-grid price aborts the run, because a P&L over silently-skipped data isn't a result.
+The feed is an `EventSource` trait held to an **executable conformance suite** — five rules every historical event source must pass, because prose alone once let two implementations disagree and one ticked a replay into 2037. A missing trades tape degrades gracefully (the book replays fine; only resting orders need trades to fill), but a *malformed* one still fails loudly. Fail-fast throughout: the first bad row, out-of-order timestamp, or off-grid price aborts the run, because a P&L over silently-skipped data isn't a result.
 
 Getting data in and out:
 
@@ -278,7 +286,7 @@ CLI-only example strategies live in [`crates/pmbt-cli/src/strategies/`](crates/p
 
 **Next, in rough order:**
 
-1. **Live paper trading** — a websocket source over the existing `clob` core (the engine is already generic over the source and its error type, so this needs no engine change), a recorder lifecycle for continuous output rotation, and a report shape for a run that never drains.
+1. **Paper service hardening** — the YES/NO prototype now has shared accounting, reconnects with retained orders, and rotated replay captures. Next: current market rules, richer analytics, long-running validation, EC2 deployment, and durable crash recovery (see [plan](docs/paper-trading-plan.md)).
 2. **Alternative-data feeds** — signals (scores, prices, sentiment) merged into the same timestamp-ordered event stream, so a strategy can react to non-market data without lookahead.
 
 
