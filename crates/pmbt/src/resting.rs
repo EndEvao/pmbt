@@ -140,6 +140,21 @@ pub struct OpenOrders {
 }
 
 impl OpenOrders {
+    /// A fresh snapshot after missing data cannot recover our previous queue.
+    /// Retain orders/resources, reset estimates, and discard pre-gap depletion.
+    pub(crate) fn reseed(&mut self, state: &MarketState, model: QueueModel) {
+        self.traded.clear();
+        for order in &mut self.orders {
+            order.last_displayed = state.size_at(order.side, order.price);
+            order.queue_ahead = if model == QueueModel::Front {
+                0.0
+            } else {
+                order.last_displayed
+            };
+            order.placed_at = state.timestamp;
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

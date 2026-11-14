@@ -55,7 +55,8 @@ impl Level {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MarketState {
     pub(crate) market_id: MarketId,
-    /// Exchange time in microseconds.
+    /// Session time in microseconds: exchange time for replay, normalized
+    /// receive time for live paper observation.
     pub(crate) timestamp: i64,
     bids: Box<[Level]>,
     asks: Box<[Level]>,
@@ -66,7 +67,8 @@ impl MarketState {
     pub fn market_id(&self) -> &MarketId {
         &self.market_id
     }
-    /// Exchange time in microseconds (the delivered view under perception delay).
+    /// Session time in microseconds (exchange time in historical replay,
+    /// normalized receive time in live paper observation).
     pub fn timestamp(&self) -> i64 {
         self.timestamp
     }

@@ -24,6 +24,16 @@ pub struct Fill {
 }
 
 impl Fill {
+    pub fn price(&self) -> Price {
+        self.price
+    }
+    pub fn quantity(&self) -> f64 {
+        self.quantity
+    }
+    pub fn liquidity(&self) -> Liquidity {
+        self.liquidity
+    }
+
     /// A **taker** fill — the order crossed the spread and removed liquidity.
     /// The fill models produce these; a resting order hit by someone else's
     /// aggressing trade uses [`Fill::maker`] instead.

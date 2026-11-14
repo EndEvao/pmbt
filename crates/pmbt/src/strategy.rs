@@ -17,8 +17,9 @@ pub enum Action {
     /// resting. Cancelling an id that has since filled or expired is a normal
     /// race (the strategy acted on the previous tick's view) and is ignored.
     Cancel(OrderId),
-    /// Ask to be called back at this exchange timestamp, even if the market has
-    /// said nothing by then.
+    /// Ask to be called back at this session timestamp, even if the market has
+    /// said nothing by then. Historical replay uses exchange time; live paper
+    /// observation uses normalized receive time.
     ///
     /// Without this a strategy can only ever act when a book arrives, so on a
     /// quiet market anything it wanted to do on a schedule simply never

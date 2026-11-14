@@ -25,6 +25,20 @@ pub struct Trade {
 }
 
 impl Trade {
+    /// Checked live-input constructor. Tape size must be positive and finite.
+    pub fn try_new(
+        timestamp: i64,
+        price: Price,
+        size: f64,
+        side: OrderSide,
+        origin_asset_id: MarketId,
+    ) -> Result<Self, &'static str> {
+        if !size.is_finite() || size <= 0.0 {
+            return Err("trade size must be finite and positive");
+        }
+        Ok(Self::new(timestamp, price, size, side, origin_asset_id))
+    }
+
     pub(crate) fn new(
         timestamp: i64,
         price: Price,

@@ -75,9 +75,10 @@ pub trait EventSource {
     ///
     /// `deadline` is a **ceiling, not an instruction**. The engine is saying
     /// "wake me by then at the latest"; a source is free to come back sooner
-    /// with a time event of its own. That is what a live connection needs —
-    /// Polymarket expects a heartbeat every 5 s and cancels every open order
-    /// after 10 s without one, plus reconnect backoff and subscription refresh.
+    /// with a time event of its own. This also permits service appointments.
+    /// The paper adapter keeps transport heartbeats outside the engine: the
+    /// public CLOB market socket expects
+    /// text PING every 10 s, independent of strategy execution deadlines.
     /// The engine never assumes a time event landed on the instant it asked
     /// for; an appointment it has not reached yet is proposed again next time.
     ///

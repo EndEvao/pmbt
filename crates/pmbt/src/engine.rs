@@ -119,6 +119,21 @@ struct Pending {
     execute_at: i64,
 }
 
+/// Per-instrument event clock state, independent of the shared cash ledger.
+#[derive(Default)]
+struct RunState {
+    tally: Tally,
+    pending: VecDeque<Pending>,
+    unseen: VecDeque<MarketState>,
+    last_ts: i64,
+    last_book: Option<MarketState>,
+    depleted: Option<MarketState>,
+    last_seen: Option<MarketState>,
+}
+
+/// Live sessions use the same execution kernel as historical replay.
+pub mod paper;
+
 /// What happened to the position when the feed drained.
 ///
 /// Resolution is pure post-run accounting: the strategy never observes it
@@ -258,182 +273,27 @@ impl Engine {
         resolution: Option<Price>,
         recorder: &mut dyn Recorder,
     ) -> Result<BacktestResult, RunError<S::Error>> {
-        let mut tally = Tally::default();
-        let feed_us = self.sim.latency.feed.as_micros() as i64;
-        // Orders waiting out their latency window. Validation runs twice,
-        // mirroring the exchange's documented taker-delay lifecycle: a cheap
-        // sanity gate at submission, then the full gates + FOK fill against
-        // the snapshot the order actually executes on.
-        let mut pending: VecDeque<Pending> = VecDeque::new();
-        // Under perception delay, snapshots the observer hasn't received yet.
-        // Whatever is still here when the data ends was simply never seen —
-        // dropped, not counted: it is data the observer's feed hadn't
-        // delivered, not orders (those are `expired`).
-        let mut unseen: VecDeque<MarketState> = VecDeque::new();
-        // The feed's final instant — when anything still open expires.
-        let mut last_ts = 0i64;
-
-        // The last book the market showed. On a tick it is carried forward,
-        // restamped, so `state.timestamp` is always "now".
-        let mut last_book: Option<MarketState> = None;
-        // Execution depth survives clock/trade events until the next real book.
-        let mut depleted: Option<MarketState> = None;
-        // Under perception, the last book the STRATEGY was shown — the delayed
-        // one, not the newer one being withheld. Handing it the current book on
-        // a tick would leak exactly what perception exists to prevent. Without
-        // perception the two are the same book, so `last_book` is used directly
-        // and nothing is cloned.
-        let mut last_seen: Option<MarketState> = None;
+        let mut run = RunState::default();
         recorder.check().map_err(RunError::Recorder)?;
         loop {
-            let deadline = self.next_deadline(&pending, &unseen, feed_us, last_ts);
+            let deadline = self.next_deadline(
+                &run.pending,
+                &run.unseen,
+                self.sim.latency.feed.as_micros() as i64,
+                run.last_ts,
+            );
             let Some(event) = feed.next_event(deadline) else {
                 break;
             };
-            // Fold the event into "now" plus what it carries. A book replaces
-            // the market's last word; a trade and a time event both leave it
-            // standing, restamped, so `state.timestamp` is always now.
-            let (now, step) = match event.map_err(RunError::Feed)? {
-                Event::Book(state) => {
-                    let now = state.timestamp;
-                    last_book = Some(state);
-                    depleted = None;
-                    (now, Step::Book)
-                }
-                Event::Trade(trade) => (trade.timestamp, Step::Trade(trade)),
-                Event::Time(now) => (now, Step::Time),
-            };
-            // Anything before the first book has no market to act against. A
-            // source is free to emit one; the engine simply has nothing to do.
-            let Some(book) = last_book.as_ref() else {
-                continue;
-            };
-            // Only a carried-forward book needs restamping — a book event
-            // already bears its own instant, so the common path never clones.
-            let carried = match step {
-                Step::Book => None,
-                _ => Some(book.at(now)),
-            };
-            let state = carried.as_ref().unwrap_or(book);
-            let trades: &[Trade] = match &step {
-                Step::Trade(trade) => std::slice::from_ref(trade),
-                _ => &[],
-            };
-            let is_tick = !matches!(step, Step::Book);
-            last_ts = now;
-            // Trades in this window are executions the exchange already
-            // processed, so resting orders they filled are advanced before
-            // anything else looks at the new book. An order placed during this
-            // snapshot therefore can't fill on trades that predate it.
-            self.advance_resting(trades, &mut tally, recorder);
-            // Only a book the market printed can be reconciled against. A tick
-            // carries the previous one forward unchanged, so there is no
-            // shrinkage to explain — and reconciling there would discard the
-            // trade volume that explains the *next* real book, handing our
-            // queue a free advance it never earned.
-            // Unconditional on a real book, even with nothing resting: this is
-            // also what clears the trade tally, and skipping it would leave
-            // stale volume to be subtracted from some later, unrelated book.
-            if !is_tick {
-                self.resting.observe(state, self.sim.queue);
-            }
-            // GTD orders the exchange has retired by now leave next: they are
-            // gone before the strategy can act on this snapshot, and before any
-            // cancel aimed at them lands (such a cancel then correctly counts
-            // as missed — there was nothing left to pull).
-            self.expire_gtd(state.timestamp, &mut tally, recorder);
-            // Cancels land only AFTER this snapshot's trades have had their
-            // chance. Reverse the two and a maker could always pull in time,
-            // which is precisely the risk being modelled.
-            self.drain_cancels(state.timestamp, &mut pending, &mut tally, recorder);
-
-            // Carry prior consumption across events; only a new book resets
-            // it. Both execution drains share the same remaining depth.
-            let mut book = ResidualBook::with_depleted(state, depleted.take());
-
-            // Orders from earlier snapshots whose time has come execute
-            // BEFORE the strategy sees this snapshot (they were on the
-            // exchange first). Execution always runs on the true book.
-            self.execute_due(&mut pending, &mut book, &mut tally, recorder);
-
-            // A tick is time passing, not the market speaking. The strategy's
-            // `on_market_state` is a reaction to a *book*, so it never fires on
-            // the carried-forward one — that would have it react again to a
-            // snapshot it has already seen. Time-triggered behaviour gets its
-            // own hook instead.
-            //
-            // A perception delivery is not an exception to that rule: what gets
-            // handed over is a real book the observer only *now* received. The
-            // tick is how it arrives on time rather than whenever the market
-            // next happens to move.
-            if self.sim.perception {
-                if !is_tick {
-                    unseen.push_back(state.clone());
-                }
-                // Everything whose delivery time has come, oldest first — on a
-                // tick that is precisely the appointment we woke for.
-                while unseen
-                    .front()
-                    .is_some_and(|s| s.timestamp + feed_us <= state.timestamp)
-                {
-                    let seen = unseen.pop_front().expect("front checked above");
-                    self.decide(
-                        &seen,
-                        state.timestamp,
-                        strategy,
-                        &mut pending,
-                        &mut tally,
-                        recorder,
-                    );
-                    last_seen = Some(seen);
-                }
-            } else if !is_tick {
-                self.decide(
-                    state,
-                    state.timestamp,
-                    strategy,
-                    &mut pending,
-                    &mut tally,
-                    recorder,
-                );
-            }
-
-            // Time passed with the market silent. The strategy hears about it
-            // through its own hook, on the last book it was shown — never the
-            // carried-forward one, which under perception it is not entitled to
-            // see yet.
-            let wake_due = self.wakeups.first().is_some_and(|&at| at <= now);
-            if is_tick || wake_due {
-                let shown = if self.sim.perception {
-                    last_seen.as_ref()
-                } else {
-                    last_book.as_ref()
-                };
-                if let Some(seen) = shown.map(|s| s.at(state.timestamp)) {
-                    self.wake(&seen, strategy, &mut pending, &mut tally, recorder);
-                }
-            }
-
-            // With zero latency `execute_at == state.timestamp`, so orders
-            // execute against their own triggering snapshot — the pre-latency
-            // semantics, exactly. With a real delay this drain is a no-op.
-            self.execute_due(&mut pending, &mut book, &mut tally, recorder);
-
-            depleted = book.into_depleted();
-
-            // Every event can change the portfolio. Keep the book/depth
-            // notification separate from carried-mark portfolio samples.
-            let quotes = Quotes {
-                bid: self.resting.best(OrderSide::Buy).map(|p| p.as_f64()),
-                ask: self.resting.best(OrderSide::Sell).map(|p| p.as_f64()),
-            };
-            if is_tick {
-                recorder.on_event(state, &self.portfolio, quotes);
-            } else {
-                recorder.on_snapshot(state, &self.portfolio, quotes);
-            }
-            recorder.check().map_err(RunError::Recorder)?;
+            self.step(&mut run, event.map_err(RunError::Feed)?, strategy, recorder)
+                .map_err(RunError::Recorder)?;
         }
+        let RunState {
+            pending,
+            tally,
+            last_ts,
+            ..
+        } = run;
 
         // Orders still in flight when the data ends are killed, not judged —
         // see the `expired` field docs for why they are counted separately.
@@ -471,6 +331,162 @@ impl Engine {
             resting_quantity,
             resting_reserved,
         })
+    }
+
+    /// Process one input without ending the session or settling positions.
+    fn step(
+        &mut self,
+        run: &mut RunState,
+        event: Event,
+        strategy: &mut dyn Strategy,
+        recorder: &mut dyn Recorder,
+    ) -> std::io::Result<()> {
+        recorder.check()?;
+        let feed_us = self.sim.latency.feed.as_micros() as i64;
+        // Fold the event into "now" plus what it carries. A book replaces
+        // the market's last word; a trade and a time event both leave it
+        // standing, restamped, so `state.timestamp` is always now.
+        let (now, step) = match event {
+            Event::Book(state) => {
+                let now = state.timestamp;
+                run.last_book = Some(state);
+                run.depleted = None;
+                (now, Step::Book)
+            }
+            Event::Trade(trade) => (trade.timestamp, Step::Trade(trade)),
+            Event::Time(now) => (now, Step::Time),
+        };
+        // Anything before the first book has no market to act against. A
+        // source is free to emit one; the engine simply has nothing to do.
+        let Some(book) = run.last_book.as_ref() else {
+            return Ok(());
+        };
+        // Only a carried-forward book needs restamping — a book event
+        // already bears its own instant, so the common path never clones.
+        let carried = match step {
+            Step::Book => None,
+            _ => Some(book.at(now)),
+        };
+        let state = carried.as_ref().unwrap_or(book);
+        let trades: &[Trade] = match &step {
+            Step::Trade(trade) => std::slice::from_ref(trade),
+            _ => &[],
+        };
+        let is_tick = !matches!(step, Step::Book);
+        run.last_ts = now;
+        // Trades in this window are executions the exchange already
+        // processed, so resting orders they filled are advanced before
+        // anything else looks at the new book. An order placed during this
+        // snapshot therefore can't fill on trades that predate it.
+        self.advance_resting(trades, &mut run.tally, recorder);
+        // Only a book the market printed can be reconciled against. A tick
+        // carries the previous one forward unchanged, so there is no
+        // shrinkage to explain — and reconciling there would discard the
+        // trade volume that explains the *next* real book, handing our
+        // queue a free advance it never earned.
+        // Unconditional on a real book, even with nothing resting: this is
+        // also what clears the trade run.tally, and skipping it would leave
+        // stale volume to be subtracted from some later, unrelated book.
+        if !is_tick {
+            self.resting.observe(state, self.sim.queue);
+        }
+        // GTD orders the exchange has retired by now leave next: they are
+        // gone before the strategy can act on this snapshot, and before any
+        // cancel aimed at them lands (such a cancel then correctly counts
+        // as missed — there was nothing left to pull).
+        self.expire_gtd(state.timestamp, &mut run.tally, recorder);
+        // Cancels land only AFTER this snapshot's trades have had their
+        // chance. Reverse the two and a maker could always pull in time,
+        // which is precisely the risk being modelled.
+        self.drain_cancels(state.timestamp, &mut run.pending, &mut run.tally, recorder);
+
+        // Carry prior consumption across events; only a new book resets
+        // it. Both execution drains share the same remaining depth.
+        let mut book = ResidualBook::with_depleted(state, run.depleted.take());
+
+        // Orders from earlier snapshots whose time has come execute
+        // BEFORE the strategy sees this snapshot (they were on the
+        // exchange first). Execution always runs on the true book.
+        self.execute_due(&mut run.pending, &mut book, &mut run.tally, recorder);
+
+        // A tick is time passing, not the market speaking. The strategy's
+        // `on_market_state` is a reaction to a *book*, so it never fires on
+        // the carried-forward one — that would have it react again to a
+        // snapshot it has already seen. Time-triggered behaviour gets its
+        // own hook instead.
+        //
+        // A perception delivery is not an exception to that rule: what gets
+        // handed over is a real book the observer only *now* received. The
+        // tick is how it arrives on time rather than whenever the market
+        // next happens to move.
+        if self.sim.perception {
+            if !is_tick {
+                run.unseen.push_back(state.clone());
+            }
+            // Everything whose delivery time has come, oldest first — on a
+            // tick that is precisely the appointment we woke for.
+            while run
+                .unseen
+                .front()
+                .is_some_and(|s| s.timestamp + feed_us <= state.timestamp)
+            {
+                let seen = run.unseen.pop_front().expect("front checked above");
+                self.decide(
+                    &seen,
+                    state.timestamp,
+                    strategy,
+                    &mut run.pending,
+                    &mut run.tally,
+                    recorder,
+                );
+                run.last_seen = Some(seen);
+            }
+        } else if !is_tick {
+            self.decide(
+                state,
+                state.timestamp,
+                strategy,
+                &mut run.pending,
+                &mut run.tally,
+                recorder,
+            );
+        }
+
+        // Time passed with the market silent. The strategy hears about it
+        // through its own hook, on the last book it was shown — never the
+        // carried-forward one, which under perception it is not entitled to
+        // see yet.
+        let wake_due = self.wakeups.first().is_some_and(|&at| at <= now);
+        if is_tick || wake_due {
+            let shown = if self.sim.perception {
+                run.last_seen.as_ref()
+            } else {
+                run.last_book.as_ref()
+            };
+            if let Some(seen) = shown.map(|s| s.at(state.timestamp)) {
+                self.wake(&seen, strategy, &mut run.pending, &mut run.tally, recorder);
+            }
+        }
+
+        // With zero latency `execute_at == state.timestamp`, so orders
+        // execute against their own triggering snapshot — the pre-latency
+        // semantics, exactly. With a real delay this drain is a no-op.
+        self.execute_due(&mut run.pending, &mut book, &mut run.tally, recorder);
+
+        run.depleted = book.into_depleted();
+
+        // Every event can change the portfolio. Keep the book/depth
+        // notification separate from carried-mark portfolio samples.
+        let quotes = Quotes {
+            bid: self.resting.best(OrderSide::Buy).map(|p| p.as_f64()),
+            ask: self.resting.best(OrderSide::Sell).map(|p| p.as_f64()),
+        };
+        if is_tick {
+            recorder.on_event(state, &self.portfolio, quotes);
+        } else {
+            recorder.on_snapshot(state, &self.portfolio, quotes);
+        }
+        recorder.check()
     }
 
     /// One strategy decision on a (possibly late-delivered) snapshot: the
@@ -875,6 +891,26 @@ impl Engine {
 
             // Both gates read the residual: if an earlier order this instant
             // already ate a side, there is nothing there for this one.
+            // A feed interruption can defer arrival beyond a GTD's effective
+            // expiry. Never fill it (or rest it) after releasing its hold.
+            if due
+                .request
+                .tif()
+                .effective_expiry()
+                .is_some_and(|at| at <= state.timestamp)
+            {
+                Self::note_order(
+                    recorder,
+                    state.timestamp,
+                    due.order.order_id(),
+                    OrderEventKind::Expired,
+                    due.request.side(),
+                    due.request.limit_price(),
+                    due.request.quantity(),
+                );
+                tally.expired_gtd += 1;
+                continue;
+            }
             if !self.can_execute(&due.request, book.current()) {
                 tally.rejections += 1;
                 continue;
@@ -1089,7 +1125,7 @@ impl Engine {
                 held - self.reservations.reserved_shares(request.market_id()) >= request.quantity()
             }
         };
-        side_ok && inventory_ok
+        request.market_id() == state.market_id() && side_ok && inventory_ok
     }
 
     /// The funding gate, phase two: would the prospective fills' actual cost
