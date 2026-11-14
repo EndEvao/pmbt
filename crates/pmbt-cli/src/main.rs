@@ -1,3 +1,4 @@
+mod paper;
 mod strategies;
 
 use std::env;
@@ -29,6 +30,10 @@ use strategies::quoter::Quoter;
 const INITIAL_CAPITAL: f64 = 10_000.0;
 
 const USAGE: &str = "usage:
+  pmbt paper --config <paper.toml> --record-dir <new-dir> [--duration-secs 300]
+  pmbt paper --replay <completed-session-dir> --record-dir <new-dir>
+      trade YES and NO against live data with shared paper cash; duration 0
+      runs until interrupted. Reconnects retain orders and flag missing data.
   pmbt run <strategy> <book_snapshot_full.parquet>
            [--config <profile.toml>] [--market-name <name>] [--outcome <label>]
            [--resolution 0|1] [--fill naive|sweep]
@@ -138,6 +143,7 @@ fn main() {
 fn dispatch() -> Result<(), Box<dyn Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
+        Some("paper") => paper::command(args).map_err(|e| e as Box<dyn Error>),
         Some("run") => cmd_run(args),
         Some("batch") => cmd_batch(args),
         Some("compare") => cmd_compare(args),
