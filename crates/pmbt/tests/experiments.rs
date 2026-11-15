@@ -53,7 +53,7 @@ fn comparison(dir: &TestDir, axis: &str) -> ComparisonConfig {
 }
 
 #[test]
-fn batch_factory_is_fresh_and_capital_independent() {
+fn batch_factory_is_fresh_and_total_capital_is_split_equally() {
     let dir = TestDir::new();
     let mut config = BatchConfig::new(universe(&dir));
     config.outputs = ExperimentOutputs {
@@ -69,10 +69,11 @@ fn batch_factory_is_fresh_and_capital_independent() {
     assert_eq!(called, ["one", "two"]);
     assert_eq!(result.aggregate.total_pnl, 0.0);
     assert_eq!(result.aggregate.fills, 2);
+    assert_eq!(result.aggregate.initial_capital, 10_000.0);
     assert_eq!(result.simulations[0].category, Some(Category::Crypto));
     assert_eq!(result.simulations[1].category, Some(Category::Geopolitics));
     for run in &result.runs {
-        assert_eq!(run.result.initial_capital, 10_000.0);
+        assert_eq!(run.result.initial_capital, 5_000.0);
         assert!(!run.curve.is_empty());
     }
     assert_eq!(result.diagnostics.len(), 2);
@@ -83,6 +84,74 @@ fn batch_factory_is_fresh_and_capital_independent() {
     .unwrap();
     assert_eq!(plain.aggregate, result.aggregate);
     assert!(plain.runs.iter().all(|r| r.curve.is_empty()));
+}
+
+#[test]
+fn weighted_budgets_constrain_fills_and_never_borrow_from_other_markets() {
+    let dir = TestDir::new();
+    let mut u = universe(&dir);
+    u.portfolio.initial_capital = 100.0;
+    u.markets[0].allocation_weight = Some(1.0);
+    u.markets[1].allocation_weight = Some(3.0);
+    let mut config = BatchConfig::new(u);
+    config.outputs.json = Some(dir.path("weighted.json"));
+    let result = run_batch(config, |_| Box::new(BuyOnce::new(100.0))).unwrap();
+    assert_eq!(result.aggregate.initial_capital, 100.0);
+    let first = &result.runs[0].result;
+    let second = &result.runs[1].result;
+    assert_eq!(
+        (first.initial_capital, second.initial_capital),
+        (25.0, 75.0)
+    );
+    // Each FOK buy costs $50: the first cannot borrow from the second;
+    // its untouched $25 is not recycled into the second allocation.
+    assert_eq!(
+        (first.fills, first.rejections, first.final_cash),
+        (0, 1, 25.0)
+    );
+    assert_eq!((second.fills, second.final_cash), (1, 25.0));
+    assert_eq!(result.aggregate.total_pnl, -50.0);
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.path("weighted.json")).unwrap()).unwrap();
+    assert_eq!(report["agg"]["initial_capital"], 100.0);
+    let markets = report["markets"].as_array().unwrap();
+    assert_eq!(
+        markets.iter().find(|m| m["id"] == "one").unwrap()["initial_capital"],
+        25.0
+    );
+    assert_eq!(
+        markets.iter().find(|m| m["id"] == "two").unwrap()["initial_capital"],
+        75.0
+    );
+}
+
+#[test]
+fn library_override_is_a_total_budget_and_invalid_allocations_precede_factory() {
+    let dir = TestDir::new();
+    let mut u = universe(&dir);
+    u.portfolio.initial_capital = 100.0;
+    let mut config = BatchConfig::new(u);
+    config.initial_capital = 200.0;
+    let result = run_batch(config, |_| Box::new(BuyOnce::new(100.0))).unwrap();
+    assert_eq!(result.aggregate.initial_capital, 200.0);
+    assert!(result
+        .runs
+        .iter()
+        .all(|r| r.result.initial_capital == 100.0));
+    for capital in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        let mut config = BatchConfig::new(universe(&dir));
+        config.initial_capital = capital;
+        assert!(matches!(
+            run_batch(config, |_| panic!("must validate before strategy")),
+            Err(ExperimentError::Universe(_))
+        ));
+    }
+    let mut config = BatchConfig::new(universe(&dir));
+    config.universe.markets[1].allocation_weight = Some(3.0);
+    assert!(matches!(
+        run_batch(config, |_| panic!("must validate all allocations first")),
+        Err(ExperimentError::Universe(_))
+    ));
 }
 
 #[test]

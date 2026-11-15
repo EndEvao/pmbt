@@ -179,6 +179,9 @@ A **universe file** describes a set of markets to run over:
 name     = "example"
 data_dir = "data/telonex_example"
 
+[portfolio]
+initial_capital = 10000.0 # total budget, divided equally across entries by default
+
 [[markets]]
 market_id  = "1006980253…779656"
 category   = "geopolitics"     # world events — the fee-free tier
@@ -191,7 +194,7 @@ Each entry carries its own category (hence its own taker delay and fee tier) and
 
 Two commands run *many* engines and reduce them for you:
 
-- **`pmbt batch <strategy> <universe.toml>`** runs a fresh engine per market across a universe (the single-market assumption is never touched) and aggregates the results — combined P&L, per-market attribution, an HTML report with a cumulative curve. Fails fast: the first market that can't load or run aborts the batch, because a partial aggregate is a lie.
+- **`pmbt batch <strategy> <universe.toml>`** divides one portfolio budget across universe entries, runs a fresh engine and strategy within each allocation, and aggregates the results. The default total is $10,000, split equally. Set `[portfolio].initial_capital` to change the total; set a positive `allocation_weight` on every entry for a weighted split. Cash is not reused or transferred between entries. Reports show allocations, combined P&L, and per-market attribution. See [batch configuration and migration](docs/library.md#batches): capital previously applied separately to every entry. Fails fast on a market load/run error.
 - **`pmbt compare <strategy> <book>`** runs the *same* strategy over the *same* feed under a matrix of configs. The default `realism` axis is a **cumulative friction ladder** —
 
   ```

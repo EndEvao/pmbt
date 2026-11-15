@@ -497,32 +497,33 @@ fn cmd_batch(mut args: impl Iterator<Item = String>) -> Result<(), Box<dyn Error
     let universe = Universe::load(&path)?;
     let universe_name = universe.name.clone();
     build(&name).ok_or_else(|| format!("unknown strategy {name:?}"))?;
-    let outcome = run_batch(
-        BatchConfig {
-            universe,
-            overrides: sim_flags,
-            initial_capital: INITIAL_CAPITAL,
-            outputs: ExperimentOutputs {
-                html: report_path.map(PathBuf::from),
-                json: record_path.map(PathBuf::from),
-            },
-        },
-        |_| build(&name).expect("validated strategy").0,
-    )?;
+    let mut config = BatchConfig::new(universe);
+    config.overrides = sim_flags;
+    config.outputs = ExperimentOutputs {
+        html: report_path.map(PathBuf::from),
+        json: record_path.map(PathBuf::from),
+    };
+    let outcome = run_batch(config, |_| build(&name).expect("validated strategy").0)?;
     print_diagnostics(&outcome.diagnostics);
     for run in &outcome.runs {
         println!(
-            "  {}  {:<8}  total {:+10.2}  fills {:>6}  rej {:>6}",
-            run.id, run.category, run.result.total_pnl, run.result.fills, run.result.rejections
+            "  {}  {:<8}  capital {:>10.2}  total {:+10.2}  fills {:>6}  rej {:>6}",
+            run.id,
+            run.category,
+            run.result.initial_capital,
+            run.result.total_pnl,
+            run.result.fills,
+            run.result.rejections
         );
     }
     let agg = &outcome.aggregate;
     println!(
-        "universe {:?}: {} markets\n  \
+        "universe {:?}: {} markets, portfolio capital ${:.2}\n  \
          total_pnl {:+.2} (realized {:+.2}, settlement {:+.2}, fees {:.2})\n  \
          fills {}  rejections {}  settled {}  unresolved {}  nothing_held {}",
         universe_name,
         agg.markets,
+        agg.initial_capital,
         agg.total_pnl,
         agg.realized_pnl,
         agg.settlement_pnl,

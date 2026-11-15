@@ -1,6 +1,6 @@
 //! Batch and comparison workflows for caller-owned strategies. Factories are
 //! called once per run; no strategy state is shared by the orchestration.
-//! Batch capital is independent per market, never carried between markets.
+//! One batch budget is allocated up front; capital is never carried between markets.
 use crate::{
     backtest::{open_input, validate_outputs},
     config::{latency_preset, resolve, ConfigError, ResolvedSimulation, SimulationConfig},
@@ -61,15 +61,18 @@ pub enum ExperimentError {
 pub struct BatchConfig {
     pub universe: Universe,
     pub overrides: SimulationConfig,
+    /// Total portfolio budget, divided equally or by universe entry weights.
+    /// `new` reads the universe budget; assigning this field overrides it.
     pub initial_capital: f64,
     pub outputs: ExperimentOutputs,
 }
 impl BatchConfig {
     pub fn new(universe: Universe) -> Self {
+        let initial_capital = universe.portfolio.initial_capital;
         Self {
             universe,
             overrides: SimulationConfig::default(),
-            initial_capital: 10_000.0,
+            initial_capital,
             outputs: ExperimentOutputs::default(),
         }
     }
@@ -90,25 +93,16 @@ pub fn run_batch(
 ) -> Result<BatchOutcome, ExperimentError> {
     let universe = &config.universe;
     let base = resolve(universe.simulation.as_ref(), &config.overrides)?;
-    if universe.markets.is_empty() {
-        return Err(UniverseError::EmptyUniverse.into());
-    }
-    let mut ids = std::collections::HashSet::new();
-    for entry in &universe.markets {
-        if !ids.insert(&entry.market_id) {
-            return Err(UniverseError::DuplicateMarket(entry.market_id.clone()).into());
-        }
-        entry.resolution()?;
-    }
+    let allocations = universe.capital_allocations(config.initial_capital)?;
     validate_outputs(&config.outputs.outputs())?;
     let mut runs = Vec::new();
     let mut simulations = Vec::new();
     let mut diagnostics = Vec::new();
-    for entry in &universe.markets {
+    for (entry, capital) in universe.markets.iter().zip(allocations) {
         let paths = entry.data_files(&universe.data_dir)?;
         let mut input = BacktestConfig::new(&paths[0]);
         input.book_paths = paths;
-        input.initial_capital = config.initial_capital;
+        input.initial_capital = capital;
         input.resolution = entry.resolution()?;
         let resolved = ResolvedSimulation {
             category: Some(entry.category),

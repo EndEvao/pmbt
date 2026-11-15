@@ -4,7 +4,8 @@
 //! entry names a token, its category, and (if the market has resolved) what
 //! the token redeemed at. The batch runner executes one single-market engine
 //! per entry — the engine's single-market assumption is never touched — and
-//! aggregates the results.
+//! aggregates the results. One portfolio budget is allocated up front, equally
+//! by default or by explicit entry weights. No capital moves between runs.
 //!
 //! This is also where per-market metadata lives as features grow: the
 //! `Category` enum exists so the future latency model can map category →
@@ -47,6 +48,9 @@ pub enum Category {
 pub struct MarketEntry {
     pub market_id: String,
     pub category: Category,
+    /// Relative share of the portfolio budget. Either every entry specifies a
+    /// finite positive weight, or all omit it for equal allocation.
+    pub allocation_weight: Option<f64>,
     /// What the traded token redeemed at (0 lost / 1 won); absent = the
     /// market is unresolved. Same semantics as the `--resolution` CLI flag.
     resolution: Option<u8>,
@@ -57,6 +61,21 @@ pub struct MarketEntry {
 // Preserve the original public import paths.
 pub use crate::config::{SimulationConfig, SimulationProfile};
 
+/// Initial portfolio budget, divided among universe entries before any runs.
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PortfolioConfig {
+    pub initial_capital: f64,
+}
+
+impl Default for PortfolioConfig {
+    fn default() -> Self {
+        Self {
+            initial_capital: 10_000.0,
+        }
+    }
+}
+
 /// A parsed, validated universe config.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +85,8 @@ pub struct Universe {
     pub data_dir: PathBuf,
     #[serde(default)]
     pub simulation: Option<SimulationConfig>,
+    #[serde(default)]
+    pub portfolio: PortfolioConfig,
     pub markets: Vec<MarketEntry>,
 }
 
@@ -82,17 +103,59 @@ impl Universe {
 
     fn parse(text: &str) -> Result<Universe, UniverseError> {
         let universe: Universe = toml::from_str(text)?;
-        if universe.markets.is_empty() {
+        universe.capital_allocations(universe.portfolio.initial_capital)?;
+        Ok(universe)
+    }
+
+    /// Resolve fixed budgets in market order. Weights are relative, not dollar
+    /// amounts; missing weights mean equal allocation only when all are absent.
+    /// No capital is transferred or reused between the resulting market runs.
+    /// Validate here too because callers can construct/mutate configs directly.
+    pub fn capital_allocations(&self, total: f64) -> Result<Vec<f64>, UniverseError> {
+        if !total.is_finite() || total <= 0.0 {
+            return Err(UniverseError::InvalidCapital(total));
+        }
+        if self.markets.is_empty() {
             return Err(UniverseError::EmptyUniverse);
         }
         let mut seen = HashSet::new();
-        for entry in &universe.markets {
+        let weighted = self.markets.iter().any(|m| m.allocation_weight.is_some());
+        let mut weights = Vec::with_capacity(self.markets.len());
+        for entry in &self.markets {
             if !seen.insert(entry.market_id.as_str()) {
                 return Err(UniverseError::DuplicateMarket(entry.market_id.clone()));
             }
             entry.resolution()?; // validate 0|1 up front, not mid-batch
+            let weight = match entry.allocation_weight {
+                Some(w) if w.is_finite() && w > 0.0 => w,
+                None if !weighted => 1.0,
+                _ => return Err(UniverseError::InvalidAllocation(entry.market_id.clone())),
+            };
+            weights.push(weight);
         }
-        Ok(universe)
+        // Normalize before summing so large finite weights cannot overflow.
+        let largest = weights.iter().copied().fold(0.0_f64, f64::max);
+        let scaled_sum: f64 = weights.iter().map(|w| w / largest).sum();
+        let mut amounts: Vec<f64> = weights
+            .iter()
+            .map(|w| total * ((w / largest) / scaled_sum))
+            .collect();
+        // Assign floating-point residual to the first largest allocation.
+        // Avoid subtracting all prior allocations to compute a tiny last one.
+        let largest_index = weights
+            .iter()
+            .position(|w| *w == largest)
+            .expect("nonempty weights");
+        let allocated: f64 = amounts.iter().sum();
+        amounts[largest_index] += total - allocated;
+        for (entry, amount) in self.markets.iter().zip(&amounts) {
+            if !amount.is_finite() || *amount <= 0.0 {
+                return Err(UniverseError::UnrepresentableAllocation(
+                    entry.market_id.clone(),
+                ));
+            }
+        }
+        Ok(amounts)
     }
 }
 
@@ -151,16 +214,22 @@ pub enum UniverseError {
     DuplicateMarket(String),
     #[error("universe has no markets")]
     EmptyUniverse,
+    #[error("portfolio initial capital must be finite and positive, got {0}")]
+    InvalidCapital(f64),
+    #[error("market {0:?}: allocation_weight must be finite and positive for every entry, or omitted for all entries")]
+    InvalidAllocation(String),
+    #[error("market {0:?}: allocation cannot be represented as a finite positive budget; adjust capital or weights")]
+    UnrepresentableAllocation(String),
     #[error("no book_snapshot_full parquet for market {0:?} in the data dir")]
     DataFileNotFound(String),
 }
 
 /// The universe-level rollup: exact sums over the per-market results. Cash
-/// figures stay per-market (each run starts from its own initial capital);
-/// P&L and counts add.
+/// and P&L add over fixed per-market allocations; there are no cash transfers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Aggregate {
     pub markets: usize,
+    pub initial_capital: f64,
     pub total_pnl: f64,
     pub realized_pnl: f64,
     pub settlement_pnl: f64,
@@ -175,6 +244,7 @@ pub struct Aggregate {
 pub fn aggregate(results: &[(String, BacktestResult)]) -> Aggregate {
     let mut agg = Aggregate {
         markets: results.len(),
+        initial_capital: 0.0,
         total_pnl: 0.0,
         realized_pnl: 0.0,
         settlement_pnl: 0.0,
@@ -186,6 +256,7 @@ pub fn aggregate(results: &[(String, BacktestResult)]) -> Aggregate {
         nothing_held: 0,
     };
     for (_, result) in results {
+        agg.initial_capital += result.initial_capital;
         agg.total_pnl += result.total_pnl;
         agg.realized_pnl += result.realized_pnl;
         agg.fees += result.fees;
@@ -226,6 +297,89 @@ mod tests {
         resolution = 0
         file = "custom/path.parquet"
     "#;
+
+    #[test]
+    fn portfolio_defaults_and_equal_split_conserve_budget() {
+        let u = Universe::parse(FULL).unwrap();
+        assert_eq!(u.portfolio.initial_capital, 10_000.0);
+        for total in [0.01, 100.0, 10_000.0, 1e100] {
+            let amounts = u.capital_allocations(total).unwrap();
+            assert!((amounts.iter().sum::<f64>() / total - 1.0).abs() < 1e-14);
+            for amount in amounts {
+                assert!((amount / (total / 3.0) - 1.0).abs() < 1e-14);
+            }
+        }
+        let mut one = u;
+        one.markets.truncate(1);
+        assert_eq!(one.capital_allocations(123.45).unwrap(), [123.45]);
+    }
+
+    #[test]
+    fn relative_weights_and_portfolio_settings() {
+        let text = format!("{FULL}\n[portfolio]\ninitial_capital = 1200.0\n");
+        let mut u = Universe::parse(&text).unwrap();
+        assert_eq!(u.portfolio.initial_capital, 1200.0);
+        for (entry, weight) in u.markets.iter_mut().zip([1.0, 2.0, 3.0]) {
+            entry.allocation_weight = Some(weight);
+        }
+        assert_eq!(
+            u.capital_allocations(1200.0).unwrap(),
+            [200.0, 400.0, 600.0]
+        );
+        for entry in &mut u.markets {
+            entry.allocation_weight = Some(f64::MAX);
+        }
+        assert_eq!(u.capital_allocations(1200.0).unwrap(), [400.0; 3]);
+    }
+
+    #[test]
+    fn invalid_capital_weights_and_underflow_fail_up_front() {
+        for value in ["0.0", "-1.0", "nan", "inf", "-inf"] {
+            let text = format!("{FULL}\n[portfolio]\ninitial_capital = {value}\n");
+            assert!(matches!(
+                Universe::parse(&text),
+                Err(UniverseError::InvalidCapital(_))
+            ));
+        }
+        let mut u = Universe::parse(FULL).unwrap();
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            for entry in &mut u.markets {
+                entry.allocation_weight = Some(bad);
+            }
+            assert!(matches!(
+                u.capital_allocations(100.0),
+                Err(UniverseError::InvalidAllocation(_))
+            ));
+        }
+        for entry in &mut u.markets {
+            entry.allocation_weight = Some(1.0);
+        }
+        u.markets[0].allocation_weight = None;
+        assert!(matches!(
+            u.capital_allocations(100.0),
+            Err(UniverseError::InvalidAllocation(_))
+        ));
+        u.markets[0].allocation_weight = Some(f64::MIN_POSITIVE);
+        u.markets[1].allocation_weight = Some(f64::MAX);
+        assert!(matches!(
+            u.capital_allocations(100.0),
+            Err(UniverseError::UnrepresentableAllocation(_))
+        ));
+        let u = Universe::parse(FULL).unwrap();
+        assert!(matches!(
+            u.capital_allocations(f64::from_bits(1)),
+            Err(UniverseError::UnrepresentableAllocation(_))
+        ));
+        assert!(Universe::parse(&format!("{FULL}\n[portfolio]\ninitial_capitol=100.0")).is_err());
+        let partial = FULL.replace(
+            "market_id = \"111\"",
+            "market_id = \"111\"\nallocation_weight = 1.0",
+        );
+        assert!(matches!(
+            Universe::parse(&partial),
+            Err(UniverseError::InvalidAllocation(_))
+        ));
+    }
 
     // --- simulation profiles (`--config`) ---------------------------------
 
@@ -439,6 +593,7 @@ mod tests {
         let entry = |id: &str| MarketEntry {
             market_id: id.to_string(),
             category: Category::Other,
+            allocation_weight: None,
             resolution: None,
             file: None,
         };
@@ -557,6 +712,7 @@ mod tests {
 
         let agg = aggregate(&results);
         assert_eq!(agg.markets, 3);
+        assert_eq!(agg.initial_capital, 30_000.0);
         assert!((agg.total_pnl - 89.0).abs() < 1e-9);
         assert!((agg.realized_pnl - (-2.5)).abs() < 1e-9);
         assert!((agg.settlement_pnl - 91.5).abs() < 1e-9);

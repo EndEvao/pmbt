@@ -5,6 +5,11 @@
 name = "example"
 data_dir = "data/telonex_example"
 
+# One total portfolio budget. Split equally unless EVERY market below sets a
+# positive allocation_weight (e.g. 3.0 and 1.0 allocate 75% and 25%).
+[portfolio]
+initial_capital = 10000.0
+
 # Per-universe simulation defaults; CLI flags override these, and built-in
 # defaults (fill naive, latency zero, perception off, taker_delay on) fill
 # whatever is unset. `run`/`compare` can borrow this very section with

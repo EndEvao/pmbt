@@ -72,6 +72,40 @@ fn batch_cli_matches_library_report() {
     assert_eq!(json(&dir.path("cli.json")), json(&dir.path("lib.json")));
 }
 #[test]
+fn batch_cli_uses_portfolio_budget_and_weights_from_universe() {
+    let dir = TestDir::new();
+    universe(&dir);
+    let path = dir.path("universe.toml");
+    let text = fs::read_to_string(&path)
+        .unwrap()
+        .replace("market_id='one'", "market_id='one'\nallocation_weight=1.0")
+        .replace("market_id='two'", "market_id='two'\nallocation_weight=3.0");
+    fs::write(
+        &path,
+        format!("{text}\n[portfolio]\ninitial_capital=100.0\n"),
+    )
+    .unwrap();
+    let mut config = BatchConfig::new(Universe::load(&path).unwrap());
+    config.outputs.json = Some(dir.path("lib.json"));
+    run_batch(config, |_| Box::new(BuyOnce::new(100.0))).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_pmbt"))
+        .args(["batch", "buyandhold"])
+        .arg(path)
+        .arg("--record")
+        .arg(dir.path("cli.json"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json(&dir.path("cli.json")), json(&dir.path("lib.json")));
+    assert_eq!(json(&dir.path("cli.json"))["agg"]["initial_capital"], 100.0);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("portfolio capital $100.00"));
+}
+
+#[test]
 fn comparison_cli_matches_library_for_every_axis() {
     for axis in ["realism", "latency", "fees", "perception", "taker-delay"] {
         let dir = TestDir::new();

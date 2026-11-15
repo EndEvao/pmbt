@@ -127,6 +127,7 @@ available for custom feeds, fill models, or recording policies.
 use pmbt::experiments::{BatchConfig, run_batch};
 use pmbt::universe::Universe;
 let mut config = BatchConfig::new(Universe::load("universes/example.toml")?);
+config.initial_capital = 10_000.0; // total portfolio budget, not per-market capital
 config.outputs.html = Some("runs/batch.html".into());
 let outcome = run_batch(config, |_entry| {
     Box::new(BuyOnce::new(25.0))
@@ -136,12 +137,54 @@ println!("{} markets, P&L {}", outcome.aggregate.markets, outcome.aggregate.tota
 ```
 
 The factory receives each `MarketEntry`, allowing private parameters to vary by
-market. Every market starts with the full configured capital; results are not a
-shared capital allocation simulation. Entry categories override profile
-categories. No requested output means no retained history; aggregate reports
+market. One portfolio budget is allocated across entries before any runs: equal
+shares by default, or proportional to each entry's `allocation_weight`.
+`BatchConfig::new` reads `[portfolio].initial_capital` from the universe (default
+$10,000); assigning `config.initial_capital` overrides that **total**. Allocations
+are fixed: cash and profits never transfer between entries, even when their data
+periods do not overlap. Each entry currently identifies one token, not a paired
+YES/NO session. Entry categories override profile categories.
+No requested output means no retained history; aggregate reports
 reduce one market's history to a curve before starting the next. A failure
 aborts the batch without publishing aggregate outputs. Outcome simulations and
 runs have matching order.
+
+For example, this universe allocates $7,500 and $2,500:
+
+```toml
+name = "weighted-portfolio"
+data_dir = "data/telonex"
+
+[portfolio]
+initial_capital = 10000.0
+
+[[markets]]
+market_id = "first-token"
+category = "crypto"
+allocation_weight = 3.0
+
+[[markets]]
+market_id = "second-token"
+category = "politics"
+allocation_weight = 1.0
+```
+
+Omit **all** weights for an equal split. If any weight is present, every entry
+must have a finite positive weight; weights are relative and need not sum to 1
+or 100. Zero-weight entries should be removed from the universe. Capital must
+also be finite and positive. Allocations use the existing floating-point money
+representation; any rounding residual goes to the first largest allocation,
+and allocations that underflow to zero are rejected. Preview the budgets with
+`universe.capital_allocations(total)` without loading market data.
+
+CLI output, JSON, and HTML reports include allocated capital per entry and the
+aggregate initial capital. Strategy order sizes are unchanged: an order too
+large for its allocation can be rejected normally by the engine.
+
+**Migration:** batch `initial_capital` previously meant capital **per entry**.
+It now means capital for the **whole universe**. To reproduce a prior run with
+N entries and $10,000 per entry, set total capital to N × $10,000 and omit the
+weights. Single-run, comparison, and live paper capital semantics are unchanged.
 
 ## Comparisons
 

@@ -1,7 +1,7 @@
 //! The batch (universe) report: cumulative PnL across many markets, with the
 //! per-market attribution that says where the total came from.
 //!
-//! Each market in a universe runs its own engine from its own initial capital,
+//! Each market in a universe runs its own engine from its allocated capital,
 //! so "the batch result" is the **sum** of the per-market PnLs. This module
 //! builds two views of that:
 //!
@@ -152,6 +152,7 @@ struct MarketRow {
     id: String,
     short: String,
     category: String,
+    initial_capital: f64,
     total: f64,
     realized: f64,
     settlement: f64,
@@ -163,6 +164,7 @@ struct MarketRow {
 #[derive(Serialize)]
 struct AggOut {
     markets: usize,
+    initial_capital: f64,
     total_pnl: f64,
     realized_pnl: f64,
     settlement_pnl: f64,
@@ -194,6 +196,7 @@ fn short_id(id: &str) -> String {
 fn build_model<'a>(name: &'a str, runs: &[MarketRun]) -> BatchModel<'a> {
     let mut agg = AggOut {
         markets: runs.len(),
+        initial_capital: 0.0,
         total_pnl: 0.0,
         realized_pnl: 0.0,
         settlement_pnl: 0.0,
@@ -207,6 +210,7 @@ fn build_model<'a>(name: &'a str, runs: &[MarketRun]) -> BatchModel<'a> {
     let mut markets = Vec::with_capacity(runs.len());
     for run in runs {
         let r = &run.result;
+        agg.initial_capital += r.initial_capital;
         let (settlement_pnl, state) = match &r.settlement {
             Settlement::Settled { pnl, .. } => {
                 agg.settled += 1;
@@ -231,6 +235,7 @@ fn build_model<'a>(name: &'a str, runs: &[MarketRun]) -> BatchModel<'a> {
             id: run.id.clone(),
             short: short_id(&run.id),
             category: run.category.clone(),
+            initial_capital: r.initial_capital,
             total: r.total_pnl,
             realized: r.realized_pnl,
             settlement: settlement_pnl,
