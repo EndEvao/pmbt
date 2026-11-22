@@ -91,22 +91,29 @@ fn waterfall(runs: &[CompareRun], ladder: bool) -> Vec<WaterStep> {
     if !ladder || runs.len() < 2 {
         return Vec::new();
     }
+    let Some(pnls) = runs
+        .iter()
+        .map(|r| super::marked_pnl(&r.result, &r.curve))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Vec::new();
+    };
     let mut steps = Vec::with_capacity(runs.len() + 1);
     steps.push(WaterStep {
         label: runs[0].label.clone(),
-        delta: runs[0].result.total_pnl,
+        delta: pnls[0],
         total: false,
     });
-    for pair in runs.windows(2) {
+    for (index, pair) in runs.windows(2).enumerate() {
         steps.push(WaterStep {
             label: pair[1].label.clone(),
-            delta: pair[1].result.total_pnl - pair[0].result.total_pnl,
+            delta: pnls[index + 1] - pnls[index],
             total: false,
         });
     }
     steps.push(WaterStep {
         label: "realistic".to_string(),
-        delta: runs[runs.len() - 1].result.total_pnl,
+        delta: pnls[pnls.len() - 1],
         total: true,
     });
     steps
@@ -127,12 +134,15 @@ struct RunOut {
     label: String,
     detail: String,
     total_pnl: f64,
+    marked_pnl: Option<f64>,
+    marked_return: Option<f64>,
     total_return: f64,
     realized: f64,
     settlement: f64,
     fees: f64,
     sharpe: f64,
     sharpe_raw: f64,
+    sharpe_defined: bool,
     max_dd: f64,
     fills: u64,
     rejections: u64,
@@ -185,12 +195,15 @@ pub fn build_model<'a>(
                 label: r.label.clone(),
                 detail: r.detail.clone(),
                 total_pnl: res.total_pnl,
+                marked_pnl: super::marked_pnl(res, &r.curve),
+                marked_return: super::marked_pnl(res, &r.curve).map(|p| p / res.initial_capital),
                 total_return: s.total_return,
                 realized: res.realized_pnl,
                 settlement,
                 fees: res.fees,
                 sharpe: s.sharpe,
                 sharpe_raw: s.sharpe_raw,
+                sharpe_defined: s.sharpe_defined,
                 max_dd: s.max_drawdown.frac,
                 fills: res.fills,
                 rejections: res.rejections,
@@ -231,6 +244,7 @@ pub fn render(
         .expect("comparison model serializes")
         .replace("</", "<\\/");
     TEMPLATE
+        .replace("__REPORT_STYLE__", super::STYLE)
         .replace("__DATA__", &json)
         .replace("__TITLE__", &super::html::escape_html(title))
 }
@@ -324,5 +338,32 @@ mod tests {
     fn non_ladder_axes_have_no_waterfall() {
         let runs = vec![run("zero", 10.0), run("us-east", 4.0)];
         assert!(waterfall(&runs, false).is_empty());
+    }
+
+    #[test]
+    fn comparison_uses_marked_holdings_and_undefined_ratios_are_explicit() {
+        use crate::domain::{fill::Fill, order::OrderSide, position::Position, types::Price};
+        let mut open = run("open", 0.0);
+        let mut position = Position::default();
+        position.apply(&Fill::new(
+            OrderSide::Buy,
+            Price::parse_decimal("0.4").unwrap(),
+            100.0,
+            0,
+        ));
+        open.result.open_position = Some(position);
+        open.curve = vec![(1, 10.0)];
+        let mut runs = vec![open, run("flat", 5.0)];
+        let model = build_model("test", "", true, true, &runs);
+        assert_eq!(model.runs[0].marked_pnl, Some(10.0));
+        assert_eq!(model.runs[0].marked_return, Some(0.001));
+        assert!(!model.runs[0].sharpe_defined);
+        assert_eq!(model.waterfall[1].delta, -5.0);
+        runs[0].curve.clear();
+        assert!(waterfall(&runs, true).is_empty());
+        assert_eq!(
+            build_model("test", "", true, true, &runs).runs[0].marked_pnl,
+            None
+        );
     }
 }

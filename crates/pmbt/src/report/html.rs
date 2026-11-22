@@ -309,7 +309,8 @@ pub fn render_with_context(
     let (head, tail) = TEMPLATE.split_once("__DATA__").expect("report data slot");
     format!(
         "{}{}{}",
-        head.replace("__TITLE__", &escape_html(title)),
+        head.replace("__REPORT_STYLE__", super::STYLE)
+            .replace("__TITLE__", &escape_html(title)),
         json,
         tail
     )

@@ -34,4 +34,6 @@ jobs:
           node-version: '20'
       - name: Report JavaScript smoke checks
         run: node scripts/check_report.mjs
+      - name: Universe and comparison report smoke checks
+        run: node scripts/check_report_variants.mjs
       # Captured market data is not committed. Run ignored replay suites locally.

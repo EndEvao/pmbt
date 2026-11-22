@@ -153,6 +153,9 @@ struct MarketRow {
     short: String,
     category: String,
     initial_capital: f64,
+    marked_pnl: Option<f64>,
+    unrealized: Option<f64>,
+    return_on_capital: Option<f64>,
     total: f64,
     realized: f64,
     settlement: f64,
@@ -165,6 +168,9 @@ struct MarketRow {
 struct AggOut {
     markets: usize,
     initial_capital: f64,
+    marked_pnl: Option<f64>,
+    unrealized: Option<f64>,
+    ending_equity: Option<f64>,
     total_pnl: f64,
     realized_pnl: f64,
     settlement_pnl: f64,
@@ -197,6 +203,9 @@ fn build_model<'a>(name: &'a str, runs: &[MarketRun]) -> BatchModel<'a> {
     let mut agg = AggOut {
         markets: runs.len(),
         initial_capital: 0.0,
+        marked_pnl: Some(0.0),
+        unrealized: Some(0.0),
+        ending_equity: None,
         total_pnl: 0.0,
         realized_pnl: 0.0,
         settlement_pnl: 0.0,
@@ -210,6 +219,10 @@ fn build_model<'a>(name: &'a str, runs: &[MarketRun]) -> BatchModel<'a> {
     let mut markets = Vec::with_capacity(runs.len());
     for run in runs {
         let r = &run.result;
+        let marked = super::marked_pnl(r, &run.curve);
+        let unrealized = marked.map(|pnl| pnl - r.total_pnl);
+        agg.marked_pnl = agg.marked_pnl.zip(marked).map(|(a, b)| a + b);
+        agg.unrealized = agg.unrealized.zip(unrealized).map(|(a, b)| a + b);
         agg.initial_capital += r.initial_capital;
         let (settlement_pnl, state) = match &r.settlement {
             Settlement::Settled { pnl, .. } => {
@@ -236,6 +249,9 @@ fn build_model<'a>(name: &'a str, runs: &[MarketRun]) -> BatchModel<'a> {
             short: short_id(&run.id),
             category: run.category.clone(),
             initial_capital: r.initial_capital,
+            marked_pnl: marked,
+            unrealized,
+            return_on_capital: marked.map(|pnl| pnl / r.initial_capital),
             total: r.total_pnl,
             realized: r.realized_pnl,
             settlement: settlement_pnl,
@@ -244,14 +260,22 @@ fn build_model<'a>(name: &'a str, runs: &[MarketRun]) -> BatchModel<'a> {
             fills: r.fills,
         });
     }
+    agg.ending_equity = agg.marked_pnl.map(|pnl| agg.initial_capital + pnl);
     // Biggest contributors first — the attribution reads top-down.
     markets.sort_by(|a, b| {
-        b.total
-            .partial_cmp(&a.total)
+        b.marked_pnl
+            .partial_cmp(&a.marked_pnl)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let combined = combined_curve(runs)
+    // A partial union would look like a whole-portfolio valuation. Callers
+    // without recorded history still get scalar results, but no partial curve.
+    let complete_curve = if runs.iter().any(|run| run.curve.is_empty()) {
+        Vec::new()
+    } else {
+        combined_curve(runs)
+    };
+    let combined = complete_curve
         .into_iter()
         .map(|(t, p)| CurvePoint {
             t: t / 1_000,
@@ -276,6 +300,7 @@ pub fn render(name: &str, runs: &[MarketRun]) -> String {
         .expect("batch model serializes")
         .replace("</", "<\\/");
     TEMPLATE
+        .replace("__REPORT_STYLE__", super::STYLE)
         .replace("__DATA__", &json)
         .replace("__TITLE__", &super::html::escape_html(name))
 }
@@ -364,5 +389,36 @@ mod tests {
         // Sorted by contribution: b (20) before a (3).
         assert_eq!(model.markets[0].id, "bbbbbbbbbbbbbb");
         assert!(model.markets[0].short.contains("…"));
+    }
+
+    #[test]
+    fn open_holdings_reconcile_and_missing_marks_stay_unknown() {
+        use crate::domain::{fill::Fill, order::OrderSide, position::Position, types::Price};
+        let mut run = run_at("open", &[(1, 9.0)], -1.0);
+        let mut position = Position::default();
+        position.apply(&Fill::new(
+            OrderSide::Buy,
+            Price::parse_decimal("0.4").unwrap(),
+            100.0,
+            0,
+        ));
+        run.result.open_position = Some(position);
+        run.result.settlement = Settlement::Unresolved;
+        run.result.realized_pnl = 0.0;
+        run.result.fees = 1.0;
+        run.result.final_cash = 9959.0;
+        let model = build_model("open", std::slice::from_ref(&run));
+        assert_eq!(model.agg.marked_pnl, Some(9.0));
+        assert_eq!(model.agg.unrealized, Some(10.0));
+        assert_eq!(model.agg.ending_equity, Some(10009.0));
+        assert_eq!(model.markets[0].return_on_capital, Some(0.0009));
+        let html = render("open", std::slice::from_ref(&run));
+        assert!(html.contains("Shared, self-contained research-report styling"));
+        assert!(!html.contains("__REPORT_STYLE__"));
+        run.curve.clear();
+        let missing = build_model("missing", &[run]);
+        assert_eq!(missing.agg.marked_pnl, None);
+        assert_eq!(missing.agg.ending_equity, None);
+        assert_eq!(missing.markets[0].return_on_capital, None);
     }
 }

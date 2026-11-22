@@ -1,561 +1,27 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>__TITLE__ · PMBT Terminal</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #080808;
-        --card: #080808;
-        --ink: #e4e4e4;
-        --muted: #999;
-        --line: #333;
-        --soft: #131313;
-        --blue: #5bbdff;
-        --green: #42e38b;
-        --red: #ff5e62;
-        --purple: #cc98ff;
-        --orange: #ffad21;
-        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-      }
-      :root[data-theme="light"] {
-        color-scheme: light;
-        --bg: #ededeb;
-        --card: #fff;
-        --ink: #171717;
-        --muted: #575757;
-        --line: #c3c3bd;
-        --soft: #e2e2dc;
-        --blue: #0065a3;
-        --green: #087e41;
-        --red: #b61c36;
-        --purple: #7641a6;
-        --orange: #975500;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      html {
-        scroll-behavior: smooth;
-        scroll-padding-top: 80px;
-      }
-      body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--ink);
-        font: 12px/1.4 var(--mono);
-        font-variant-numeric: tabular-nums;
-      }
-      button,
-      input,
-      select {
-        font: inherit;
-      }
-      button,
-      select {
-        color: var(--ink);
-        background: var(--soft);
-        border: 1px solid var(--line);
-        border-radius: 0;
-        padding: 3px 8px;
-      }
-      button {
-        cursor: pointer;
-      }
-      button:hover {
-        color: var(--orange);
-        border-color: var(--orange);
-      }
-      button:disabled {
-        opacity: 0.35;
-        cursor: default;
-      }
-      :focus-visible {
-        outline: 2px solid var(--orange);
-        outline-offset: 2px;
-      }
-      h1,
-      h2,
-      h3,
-      p {
-        margin: 0;
-      }
-      h1 {
-        font-size: 20px;
-        line-height: 1.2;
-        text-transform: uppercase;
-        color: var(--orange);
-        margin: 3px 0;
-        letter-spacing: 0.035em;
-      }
-      h2,
-      h3 {
-        font-size: 12px;
-        font-weight: 700;
-        letter-spacing: 0.035em;
-        text-transform: uppercase;
-      }
-      small,
-      .note {
-        font-size: 10px;
-        color: var(--muted);
-      }
-      .muted {
-        color: var(--muted);
-      }
-      .positive {
-        color: var(--green);
-      }
-      .negative {
-        color: var(--red);
-      }
-      .eyebrow {
-        font-size: 10px;
-        font-weight: 700;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: var(--muted);
-      }
-      nav {
-        position: sticky;
-        top: 0;
-        z-index: 20;
-        background: var(--bg);
-        border-bottom: 1px solid var(--orange);
-      }
-      .navinner {
-        padding: 7px 12px;
-        display: flex;
-        gap: 12px;
-        align-items: center;
-      }
-      .brand {
-        font-size: 16px;
-        font-weight: 800;
-        color: var(--orange);
-        letter-spacing: 0.1em;
-      }
-      .navinner .eyebrow {
-        color: var(--ink);
-        border-left: 1px solid var(--line);
-        padding-left: 12px;
-      }
-      .actions {
-        margin-left: auto;
-        display: flex;
-        gap: 6px;
-      }
-      .terminal-nav {
-        display: flex;
-        gap: 2px;
-        padding: 0 12px 5px;
-        overflow: auto;
-      }
-      .terminal-nav a {
-        color: var(--blue);
-        background: var(--soft);
-        padding: 3px 10px;
-        white-space: nowrap;
-        text-decoration: none;
-        font-weight: 700;
-        font-size: 11px;
-      }
-      .terminal-nav a:hover {
-        background: var(--orange);
-        color: #080808;
-      }
-      main {
-        max-width: 1800px;
-        margin: auto;
-        padding: 10px 12px 20px;
-      }
-      .hero {
-        margin-bottom: 8px;
-        border-left: 3px solid var(--orange);
-        padding: 2px 10px;
-      }
-      .chips,
-      .controls,
-      .legend {
-        display: flex;
-        gap: 5px 14px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
-      .chips {
-        margin-top: 6px;
-      }
-      .chip {
-        font-size: 10px;
-        color: var(--muted);
-        border-right: 1px solid var(--line);
-        padding-right: 12px;
-      }
-      .metrics {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap: 1px;
-        background: var(--line);
-        border: 1px solid var(--line);
-        margin-bottom: 8px;
-      }
-      .metric {
-        background: var(--card);
-        padding: 8px 12px;
-      }
-      .metric .label {
-        font-size: 10px;
-        text-transform: uppercase;
-        color: var(--orange);
-        font-weight: 700;
-      }
-      .metric .value {
-        font-size: 25px;
-        letter-spacing: -0.035em;
-        font-weight: 700;
-        margin: 2px 0;
-      }
-      .metric small {
-        font-size: 10px;
-      }
-      .workspace {
-        display: grid;
-        grid-template-columns: minmax(0, 1.8fr) minmax(330px, 1fr);
-        gap: 8px;
-        align-items: start;
-      }
-      .panel {
-        background: var(--card);
-        border: 1px solid var(--line);
-        margin-bottom: 8px;
-        min-width: 0;
-        overflow: hidden;
-      }
-      .panelhead {
-        background: var(--soft);
-        border-bottom: 1px solid var(--line);
-        padding: 5px 9px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        flex-wrap: wrap;
-        color: var(--orange);
-      }
-      .panelhead p {
-        font-size: 10px;
-        color: var(--muted);
-        margin-top: 1px;
-      }
-      .body {
-        padding: 7px 10px;
-      }
-      .two {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
-      }
-      .two .panel {
-        min-width: 0;
-      }
-      .overview {
-        display: block;
-      }
-      .chart {
-        width: 100%;
-        position: relative;
-      }
-      .chart svg {
-        display: block;
-        width: 100%;
-        height: auto;
-        overflow: visible;
-      }
-      .chart text {
-        fill: var(--muted);
-        font: 10px var(--mono);
-        font-variant-numeric: tabular-nums;
-      }
-      .chart .grid {
-        stroke: var(--line);
-        stroke-width: 0.6;
-        stroke-dasharray: 2 4;
-      }
-      .chart .cross {
-        stroke: var(--orange);
-        stroke-dasharray: 3 3;
-        pointer-events: none;
-      }
-      .chart-label {
-        font-size: 10px;
-        font-weight: 700;
-        text-transform: uppercase;
-        color: var(--orange);
-        padding-top: 2px;
-      }
-      .chart-label span {
-        color: var(--muted);
-        margin-left: 8px;
-        font-weight: 400;
-      }
-      .readout {
-        min-height: 28px;
-        background: var(--soft);
-        border-top: 1px solid var(--line);
-        padding: 5px 7px;
-        font-size: 10px;
-        color: var(--orange);
-        margin-top: 4px;
-      }
-      .legend {
-        font-size: 10px;
-        color: var(--muted);
-        margin: 0 0 5px;
-      }
-      .legend i {
-        display: inline-block;
-        width: 14px;
-        height: 2px;
-        vertical-align: middle;
-        margin-right: 5px;
-      }
-      .controls label {
-        font-size: 10px;
-        cursor: pointer;
-        display: flex;
-        gap: 4px;
-        align-items: center;
-        color: var(--ink);
-      }
-      .controls input {
-        accent-color: var(--orange);
-        margin: 0;
-      }
-      dl {
-        margin: 0;
-        display: grid;
-        grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-        gap: 0 10px;
-      }
-      dt,
-      dd {
-        padding: 4px 0;
-        border-bottom: 1px solid var(--soft);
-        font-size: 11px;
-      }
-      dt {
-        color: var(--muted);
-      }
-      dd {
-        margin: 0;
-        text-align: right;
-        color: var(--blue);
-        overflow-wrap: anywhere;
-      }
-      details {
-        border-top: 1px solid var(--line);
-        padding: 6px 10px;
-      }
-      summary {
-        cursor: pointer;
-        color: var(--orange);
-        font-size: 11px;
-        font-weight: 700;
-        text-transform: uppercase;
-      }
-      .detailbody {
-        padding-top: 7px;
-      }
-      .tablewrap {
-        overflow-x: auto;
-      }
-      table {
-        border-collapse: collapse;
-        width: 100%;
-        white-space: nowrap;
-        font-size: 11px;
-      }
-      th,
-      td {
-        text-align: right;
-        padding: 5px 9px;
-        border-bottom: 1px solid var(--soft);
-      }
-      th {
-        font-weight: 700;
-        color: var(--orange);
-        background: var(--soft);
-        text-transform: uppercase;
-        font-size: 10px;
-      }
-      th:first-child,
-      td:first-child {
-        text-align: left;
-      }
-      tbody tr:nth-child(even) {
-        background: var(--soft);
-      }
-      tbody tr:hover {
-        background: #ffad2114;
-      }
-      td {
-        color: var(--blue);
-      }
-      .pagination {
-        padding-top: 7px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .pagination span {
-        margin-right: auto;
-      }
-      .source {
-        overflow-wrap: anywhere;
-        white-space: pre-wrap;
-        font-size: 10px;
-      }
-      .foot {
-        font-size: 10px;
-        color: var(--muted);
-        border-top: 1px solid var(--orange);
-        padding-top: 7px;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-      }
-      .empty {
-        padding: 25px;
-        color: var(--muted);
-        text-align: center;
-      }
-      [hidden] {
-        display: none !important;
-      }
-      input[type="range"] {
-        width: 100%;
-        accent-color: var(--orange);
-      }
-      .reconcile {
-        padding-top: 5px;
-        margin-top: 5px;
-        border-top: 1px solid var(--line);
-        font-size: 10px;
-        color: var(--muted);
-      }
-      @media (min-width: 1200px) {
-        #trade-stats {
-          grid-template-columns: 1fr 1fr 1fr 1fr;
-          column-gap: 20px;
-        }
-      }
-      @media (max-width: 1000px) {
-        .workspace {
-          grid-template-columns: 1fr;
-        }
-        .overview {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
-        }
-        .metric .value {
-          font-size: 21px;
-        }
-      }
-      @media (max-width: 600px) {
-        main {
-          padding: 8px;
-        }
-        .navinner {
-          padding: 6px 8px;
-        }
-        .navinner .eyebrow {
-          display: none;
-        }
-        .terminal-nav {
-          padding-left: 8px;
-        }
-        .metrics {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
-        .metric:last-child {
-          grid-column: 1/-1;
-        }
-        .two,
-        .overview {
-          display: block;
-        }
-        .metric {
-          padding: 7px 9px;
-        }
-        h1 {
-          font-size: 17px;
-        }
-        .chip {
-          font-size: 9px;
-        }
-        .body {
-          padding: 6px;
-        }
-        .chart-label span {
-          margin-left: 4px;
-        }
-        .controls {
-          gap: 8px;
-        }
-      }
-      @media print {
-        nav {
-          position: static;
-        }
-        .actions,
-        .terminal-nav,
-        .controls,
-        .pagination button {
-          display: none;
-        }
-        .workspace,
-        .two,
-        .overview {
-          display: block;
-        }
-        .panel,
-        .metric {
-          break-inside: avoid;
-        }
-        main {
-          padding: 0;
-        }
-        .metrics {
-          grid-template-columns: repeat(5, minmax(0, 1fr));
-        }
-        .readout {
-          display: none;
-        }
-        body {
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
-      }
-    </style>
+    <title>__TITLE__ · PMBT Research</title>
+    <style>__REPORT_STYLE__</style>
   </head>
   <body>
     <nav>
       <div class="navinner">
         <span class="brand">PMBT</span
-        ><span class="eyebrow">Research terminal</span>
+        ><span class="eyebrow">Research report</span>
         <div class="actions">
-          <button id="theme" type="button">Light theme</button
+          <button id="theme" type="button">Dark theme</button
           ><button id="print" type="button">Print / PDF</button>
         </div>
       </div>
       <div class="terminal-nav" aria-label="Report sections">
-        <a href="#performance">01 PERFORMANCE</a
-        ><a href="#execution-panel">02 EXECUTION</a
-        ><a href="#market-panel">03 MARKET</a
-        ><a href="#trades-panel">04 BLOTTER</a
-        ><a href="#config-panel">05 CONFIG</a>
+        <a href="#performance">Performance</a
+        ><a href="#execution-panel">Execution</a
+        ><a href="#market-panel">Market</a
+        ><a href="#trades-panel">Fills</a
+        ><a href="#config-panel">Run details</a>
       </div>
     </nav>
     <main>
@@ -570,11 +36,22 @@
         id="metrics"
         aria-label="Headline metrics"
       ></section>
+      <p class="quality-note" id="quality-note"></p>
+      <div class="two account-summary">
+        <section class="panel">
+          <div class="panelhead"><h2>Account at close</h2></div>
+          <div class="body"><dl id="account-values"></dl></div>
+        </section>
+        <section class="panel">
+          <div class="panelhead"><h2>P&amp;L reconciliation</h2></div>
+          <div class="body"><dl id="attribution-values"></dl><p class="reconcile" id="reconcile"></p></div>
+        </section>
+      </div>
       <div class="workspace">
         <section class="panel" id="performance">
           <div class="panelhead">
             <div>
-              <h2>01 / Performance</h2>
+              <h2>Performance</h2>
               <p>USD / UTC</p>
             </div>
             <div class="controls">
@@ -610,14 +87,12 @@
             </div>
             <div class="body">
               <div class="chart" id="attribution-chart"></div>
-              <dl id="attribution-values"></dl>
-              <p class="reconcile" id="reconcile"></p>
             </div>
           </section>
           <section class="panel" id="execution-panel">
             <div class="panelhead">
               <div>
-                <h2>02 / Execution</h2>
+                <h2>Execution</h2>
               </div>
             </div>
             <div class="body">
@@ -641,7 +116,7 @@
       <section class="panel" id="market-panel">
         <div class="panelhead">
           <div>
-            <h2>03 / Market</h2>
+            <h2>Market</h2>
             <p>USD / SHARE</p>
           </div>
           <div class="controls">
@@ -669,7 +144,7 @@
       <section class="panel" id="trades-panel">
         <div class="panelhead">
           <div>
-            <h2>04 / Blotter</h2>
+            <h2>Execution ledger</h2>
             <p>REALIZED / GROSS</p>
           </div>
         </div>
@@ -704,7 +179,7 @@
         <section class="panel" id="config-panel">
           <div class="panelhead">
             <div>
-              <h2>05 / Configuration</h2>
+              <h2>Run details</h2>
             </div>
           </div>
           <div class="body"><dl id="configuration"></dl></div>
@@ -726,8 +201,9 @@
       </div>
       <section class="panel">
         <details>
-          <summary>Risk statistics</summary>
+          <summary>Risk statistics and measurement basis</summary>
           <div class="detailbody">
+            <p class="cap">Ratios use uniformly sampled log returns. Annualized values extrapolate this observation period; short runs are not evidence of annual performance. “Not defined” means insufficient returns or a zero denominator.</p>
             <dl id="risk"></dl>
           </div>
         </details>
@@ -821,7 +297,7 @@
           : `${date(first)} → ${date(last)}`,
         unresolved
           ? "Open / marked to market"
-          : `Resolved${S.redemption === null ? "" : ` at $${num(S.redemption, 2)}`}`,
+          : S.settlement === "nothing_held" ? "Flat / no settlement" : `Settled${S.redemption === null ? "" : ` at $${num(S.redemption, 2)}`}`,
         `Starting capital ${money(S.initial_capital)}`,
         ...C.settings
           .filter(([k]) =>
@@ -835,7 +311,7 @@
         [
           "Net P&L",
           signed(A.headline_pnl),
-          unresolved ? "MARK-TO-MARKET" : "SETTLED / NET",
+          unresolved ? "Marked holdings · after fees" : "After fees and settlement",
           A.headline_pnl,
         ],
         [
@@ -850,7 +326,7 @@
           `${money(T.max_drawdown.dollars)} / ${duration(T.max_drawdown.duration_us)}`,
           -T.max_drawdown.frac,
         ],
-        ["Avg deployed / cost", pct(A.avg_deployed), "TIME-WEIGHTED", 0],
+        ["Ending equity", money(A.ending_equity), `Initial capital ${money(S.initial_capital)}`, 0],
         [
           "Executions",
           num(S.fills, 0),
@@ -864,6 +340,20 @@
             `<div class="metric"><div class="label">${esc(label)}</div><div class="value num ${cls(v)}">${esc(value)}</div><small>${esc(sub)}</small></div>`,
         )
         .join("");
+      list("account-values", [
+        ["Starting capital", money(S.initial_capital)],
+        ["Ending cash", money(S.final_cash)],
+        ["Marked holdings", money(A.ending_equity - S.final_cash)],
+        ["Ending equity", money(A.ending_equity)],
+        ["Open inventory", `${num(S.open_qty ?? 0, 4)} shares`],
+        ["Average capital deployed · cost", pct(A.avg_deployed)],
+      ]);
+      $("quality-note").textContent = [
+        P.length ? `Observation period: ${duration((last - first) * 1000)}` : "No recorded observations",
+        C.tape_present === true ? "Trade-tape file present" : C.tape_present === false ? "Trade-tape file absent" : "Trade-tape coverage unknown",
+        `${num(Q.one_sided, 0)} one-sided books`,
+        "Valuation: midpoint, available touch, then previous mark; zero if no price exists",
+      ].join(" · ");
       $("sampling").textContent =
         `${num(A.recorded_samples, 0)} EVENTS / ${num(P.filter((p) => !p.settlement).length, 0)} PLOT POINTS${unresolved ? "" : " / TERMINAL SETTLEMENT"}`;
       list("execution", [
@@ -936,17 +426,17 @@
       list("risk", [
         [
           "Grid-period Sharpe / Sortino",
-          `${num(T.sharpe_raw, 4)} / ${num(T.sortino_raw, 4)}`,
+          `${T.sharpe_defined ? num(T.sharpe_raw, 4) : "Not defined"} / ${T.sortino_defined ? num(T.sortino_raw, 4) : "Not defined"}`,
         ],
-        ["Annualized Sharpe / Sortino", `${num(T.sharpe)} / ${num(T.sortino)}`],
+        ["Annualized Sharpe / Sortino", `${T.sharpe_defined ? num(T.sharpe) : "Not defined"} / ${T.sortino_defined ? num(T.sortino) : "Not defined"}`],
         ["Annualized log-return volatility", pct(T.annual_vol)],
         ["Positive grid returns", pct(T.pct_positive_bars)],
         [
           "Grid spacing / return count",
           `${num(T.bar_seconds, 3)} s / ${num(T.bars, 0)}`,
         ],
-        ["Drawdown peak (UTC)", date(T.max_drawdown.peak_ts / 1000)],
-        ["Drawdown trough (UTC)", date(T.max_drawdown.trough_ts / 1000)],
+        ["Drawdown peak (UTC)", P.length ? date(T.max_drawdown.peak_ts / 1000) : "—"],
+        ["Drawdown trough (UTC)", P.length ? date(T.max_drawdown.trough_ts / 1000) : "—"],
       ]);
       $("benchmark-note").textContent =
         `HOLD ${signed(DATA.bench_final_pnl)} / STRATEGY − HOLD ${signed(A.headline_pnl - DATA.bench_final_pnl)}`;

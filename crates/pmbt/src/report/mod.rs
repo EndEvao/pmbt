@@ -25,6 +25,22 @@ use serde::Serialize;
 use crate::engine::{BacktestResult, Settlement};
 use record::TimeSeriesRecorder;
 
+/// Inlined so exported reports stay standalone and work without network access.
+const STYLE: &str = include_str!("../../assets/report.css");
+
+/// Marked P&L is available for open holdings only when a recorded valuation
+/// exists. Realized/settlement P&L remains separately available in the result.
+fn marked_pnl(result: &BacktestResult, curve: &[(i64, f64)]) -> Option<f64> {
+    if matches!(result.settlement, Settlement::Unresolved) && result.open_position.is_some() {
+        curve
+            .last()
+            .map(|(_, pnl)| *pnl)
+            .filter(|pnl| pnl.is_finite())
+    } else {
+        Some(result.total_pnl)
+    }
+}
+
 /// A flat, serializable view of a `BacktestResult`. The engine's result carries
 /// domain types (`Settlement`, `Position`) that aren't meant to be wire types;
 /// this is the report boundary's own shape, so the JSON schema is stable even

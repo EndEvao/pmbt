@@ -70,6 +70,8 @@ const blank = {
     bars: 0,
     bars_per_year: 31557600,
     sharpe: 0,
+    sharpe_defined: false,
+    sortino_defined: false,
     sortino: 0,
     sharpe_raw: 0,
     sortino_raw: 0,
@@ -142,7 +144,7 @@ function run(model, width) {
   let printed = false;
   const document = {
     getElementById: get,
-    documentElement: { dataset: { theme: "dark" } },
+    documentElement: { dataset: { theme: "light" } },
   };
   const window = {
     print() {
@@ -161,15 +163,18 @@ function run(model, width) {
     5,
   );
   assert.ok(get("configuration").innerHTML);
+  assert.ok(get("account-values").innerHTML.includes("Ending equity"));
+  assert.ok(get("quality-note").textContent.includes("Valuation"));
+  if (!model.stats.sharpe_defined) assert.ok(get("risk").innerHTML.includes("Not defined"));
   for (const id of ["show-benchmark", "show-quotes", "show-complement"]) {
     get(id).checked = !get(id).checked;
     get(id).onchange();
   }
   assert.equal(get("benchmark-panel").hidden, false);
   get("theme").onclick();
-  assert.equal(document.documentElement.dataset.theme, "light");
-  get("theme").onclick();
   assert.equal(document.documentElement.dataset.theme, "dark");
+  get("theme").onclick();
+  assert.equal(document.documentElement.dataset.theme, "light");
   get("print").onclick();
   assert.ok(printed);
   if (model.pts.length) {

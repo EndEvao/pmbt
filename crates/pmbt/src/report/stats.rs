@@ -58,6 +58,11 @@ pub struct Stats {
     // --- return metrics (on the uniform grid, annualized, rf = 0) ---
     pub sharpe: f64,
     pub sortino: f64,
+    /// False when fewer than two returns or no return variance exist. Numeric
+    /// fields retain the legacy zero fallback; presentation must use this flag.
+    pub sharpe_defined: bool,
+    /// False when fewer than two returns or no downside deviation exist.
+    pub sortino_defined: bool,
     /// Per-bar (un-annualized) reward/risk ratios. The annualized figures above
     /// are exactly these times `sqrt(bars_per_year)`; reporting both makes the
     /// annualization a visible multiplier rather than a hidden assumption —
@@ -128,6 +133,8 @@ pub(crate) fn from_grid(
         total_return: result.total_pnl / result.initial_capital,
         sharpe: sharpe_raw * annualize,
         sortino: sortino_raw * annualize,
+        sharpe_defined: returns.len() >= 2 && sd > 0.0,
+        sortino_defined: returns.len() >= 2 && downside > 0.0,
         sharpe_raw,
         sortino_raw,
         annual_vol: sd * annualize,
@@ -428,6 +435,7 @@ mod tests {
 
         assert_eq!(stats.bars, 3);
         assert!(stats.sharpe.is_finite() && stats.sharpe > 0.0);
+        assert!(stats.sharpe_defined && stats.sortino_defined);
         assert!(stats.annual_vol.is_finite() && stats.annual_vol > 0.0);
         assert!((stats.total_return - 0.009).abs() < 1e-12);
         assert!((stats.pct_positive_bars - 2.0 / 3.0).abs() < 1e-12);
@@ -467,9 +475,22 @@ mod tests {
         };
         let stats = compute(&samples, &[], &result, series::DEFAULT_GRID_US);
         assert_eq!(stats.sharpe, 0.0);
+        assert!(!stats.sharpe_defined && !stats.sortino_defined);
         assert_eq!(stats.sortino, 0.0);
         assert_eq!(stats.sharpe_raw, 0.0);
         assert_eq!(stats.sortino_raw, 0.0);
         assert_eq!(stats.annual_vol, 0.0);
+        let short = compute(&samples[..1], &[], &result, series::DEFAULT_GRID_US);
+        assert!(!short.sharpe_defined && !short.sortino_defined);
+        // Positive-only variable returns have a defined Sharpe but no
+        // downside denominator for Sortino.
+        let rising = [
+            sample(0, 1.0, 10000.0),
+            sample(1_000_000, 1.0, 10001.0),
+            sample(2_000_000, 1.0, 10010.0),
+        ];
+        let rising_stats = compute(&rising, &[], &result, series::DEFAULT_GRID_US);
+        assert!(rising_stats.sharpe_defined);
+        assert!(!rising_stats.sortino_defined);
     }
 }
