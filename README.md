@@ -241,6 +241,9 @@ local installation, and dependency path changes.
 
 ## Library use
 
+See [Research reports](docs/reporting.md) for report layout, marked P&L,
+portfolio attribution, valuation assumptions, and metric definitions.
+
 Keep private strategies in a separate Rust application with `pmbt = { path = "../pmbt/crates/pmbt" }`.
 `Backtest` accepts your strategy directly and handles inputs, simulation settings,
 HTML/JSON/Parquet recording, diagnostics, and errors. `experiments` exposes batch
